@@ -2,6 +2,8 @@
 const $ = id => document.getElementById(id);
 let cart, stores = [], editing, pending = 0;
 let notificationTimer;
+let editingSearch;
+const chosenSearches = new Map();
 let selectedStore = localStorage.getItem('cart-store') || 'meijer';
 const format = cents => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
 const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
@@ -46,25 +48,63 @@ function render() {
     const qty = el('div', undefined, 'quantity');
     const minus = button('−', () => change({ type: 'quantity', id: item.id, delta: -1 })); minus.disabled = item.quantity === 1; minus.setAttribute('aria-label', `Decrease ${item.name}`);
     const plus = button('+', () => change({ type: 'quantity', id: item.id, delta: 1 })); plus.disabled = item.quantity === 999; plus.setAttribute('aria-label', `Increase ${item.name}`); qty.append(minus, el('span', item.quantity), plus);
-    const search = button('Search all 4 stores ↗', () => grocery.searchStores([item.name, /^(choose|compare)\b/i.test(item.size) ? '' : item.size].filter(Boolean).join(' '), item.id), 'search-stores');
+    const searchOptions = el('select'); searchOptions.className = 'search-choice'; searchOptions.setAttribute('aria-label', `${item.name}: search product or UPC`);
+    for (const [index, product] of [{ name: item.name, upc: item.upc }, ...(item.alternatives || [])].entries()) {
+      const option = el('option', index ? `Alternative: ${product.name}` : `Name: ${product.name}`); option.value = `name-${index}`; searchOptions.append(option);
+      if (product.upc) { const code = el('option', `UPC ${product.upc} · ${product.name}`); code.value = `upc-${index}`; searchOptions.append(code); }
+    }
+    searchOptions.value = chosenSearches.get(item.id) || 'name-0'; if (!searchOptions.value) searchOptions.value = 'name-0'; searchOptions.onchange = () => chosenSearches.set(item.id, searchOptions.value);
+    const search = button('Search all 3 stores ↗', () => grocery.searchStores('', item.id, searchOptions.value), 'search-stores');
     top.append(detail, search, qty, button('Remove', () => change({ type: 'remove', id: item.id }), 'remove')); row.append(top);
-    const price = item.offers[item.store], block = el('div', undefined, 'store-price');
-    const edit = button('', () => openPrice(item), 'offer' + (price ? ' has-price' : ''));
-    edit.append(el('span', stores.find(s => s.id === item.store).name, 'offer-store'), el('strong', price ? format(price.cents * price.packs * item.quantity) : '+ Add / look up price'));
-    if (price) {
-      edit.append(el('span', price.product, 'product'), el('span', `${format(price.cents)} per package · ${price.packs} package(s) × ${item.quantity}`, 'source'), el('span', `${price.source === 'shelf' ? 'Shelf / receipt verified' : price.source === 'web-estimate' ? 'Online estimate' : 'Manual estimate'} · ${new Date(price.checked).toLocaleDateString()}`, 'source'));
-      if (price.needsReview) edit.append(el('span', 'Needs review', 'review-badge'));
-    } else edit.append(el('span', 'Not included in subtotal', 'source'));
-    block.append(edit);
-    if (price?.needsReview) block.append(button('Mark reviewed', () => change({ type: 'review', id: item.id }), 'mark-reviewed'));
-    row.append(block); $('items').append(row);
+    const searchRow = el('div', undefined, 'search-options'); searchRow.append(searchOptions, button('Alternatives & UPC', () => openSearchDetails(item)));
+    if (item.alternatives?.length) searchRow.append(el('span', `${item.alternatives.length} acceptable alternative(s)`, 'source'));
+    row.append(searchRow);
+    const options = el('div', undefined, 'offer-grid');
+    for (const store of stores) {
+      const related = cart.items.find(i => i.originId === item.originId && i.store === store.id);
+      const price = related?.offers[store.id], block = el('div', undefined, 'store-option');
+      const edit = button('', () => openPrice(related || item, store.id), 'offer' + (price ? ' has-price' : ''));
+      edit.append(el('span', store.name, 'offer-store'), el('strong', price ? format(price.cents * price.packs * related.quantity) : '+ Add / look up price'));
+      if (price) {
+        edit.append(el('span', price.product, 'product'), el('span', `${format(price.cents)} per package · ${price.packs} package(s) × ${related.quantity}`, 'source'), el('span', `${price.source === 'shelf' ? 'Shelf / receipt verified' : price.source === 'web-estimate' ? 'Online estimate' : 'Manual estimate'} · ${new Date(price.checked).toLocaleDateString()}`, 'source'));
+        if (price.needsReview) edit.append(el('span', 'Needs review', 'review-badge'));
+      } else edit.append(el('span', related ? 'Not yet priced in this store cart' : 'Not in this store cart', 'source'));
+      block.append(edit, button('Search this store ↗', () => grocery.searchStore(store.id, item.id, searchOptions.value), 'search-this-store'));
+      if (related?.priceOptions?.length > 1) {
+        const selection = el('select'); selection.className = 'price-option'; selection.setAttribute('aria-label', `${item.name}: chosen product at ${store.name}`);
+        related.priceOptions.forEach((quote, index) => { const o = el('option', `${quote.product} · ${format(quote.cents)} / pkg`); o.value = String(index); selection.append(o); });
+        selection.value = String(related.priceOptions.findIndex(o => o.product === price?.product && o.url === price?.url && o.packs === price?.packs));
+        selection.onchange = () => change({ type: 'choose-option', id: related.id, index: Number(selection.value) }).catch(() => {}); block.append(el('span', 'Chosen product (one counts)', 'source'), selection);
+      }
+      if (price?.needsReview) block.append(button('Mark reviewed', () => change({ type: 'review', id: related.id }), 'mark-reviewed'));
+      options.append(block);
+    }
+    row.append(options); $('items').append(row);
   }
 }
-function openPrice(item) {
-  editing = { id: item.id, store: item.store };
+function parseAlternatives(text) {
+  return text.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+    const [name, upc = '', ...extra] = line.split('|').map(part => part.trim());
+    if (extra.length) throw Error('Use one alternative per line: product name | optional UPC.');
+    return { name, upc };
+  });
+}
+function openSearchDetails(item) {
+  editingSearch = item.id; $('search-item').textContent = item.name; $('item-upc').value = item.upc || '';
+  $('item-alternatives').value = (item.alternatives || []).map(a => a.name + (a.upc ? ' | ' + a.upc : '')).join('\n');
+  $('search-error').textContent = ''; $('search-dialog').showModal();
+}
+$('close-search').onclick = () => $('search-dialog').close();
+$('search-form').onsubmit = async event => {
+  event.preventDefault();
+  try { await change({ type: 'search-details', id: editingSearch, upc: $('item-upc').value.trim(), alternatives: parseAlternatives($('item-alternatives').value) }); $('search-dialog').close(); }
+  catch (e) { $('search-error').textContent = e.message; }
+};
+function openPrice(item, store = item.store) {
+  editing = { id: item.id, store };
   grocery.setCaptureTarget(item.id).catch(e => message(e.message));
-  const offer = item.offers[item.store];
-  $('price-store').textContent = stores.find(s => s.id === item.store).name; $('price-item').textContent = item.name;
+  const offer = item.offers[store];
+  $('price-store').textContent = stores.find(s => s.id === store).name; $('price-item').textContent = item.name;
   $('offer-product').value = offer?.product || `${item.name} — ${item.size}`;
   $('offer-price').value = offer ? (offer.cents / 100).toFixed(2) : ''; $('offer-packs').value = offer?.packs || 1;
   $('offer-source').value = offer?.source || 'manual'; $('offer-url').value = offer?.url || '';
@@ -73,7 +113,7 @@ function openPrice(item) {
 }
 $('add-form').onsubmit = async event => {
   event.preventDefault(); const name = $('new-name').value.trim(); if (!name) return;
-  try { await change({ type: 'add', name, size: $('new-size').value, store: $('new-store').value, match: $('new-match').value }); $('new-name').value = ''; $('new-size').value = ''; $('new-name').focus(); } catch {}
+  try { await change({ type: 'add', name, size: $('new-size').value, store: $('new-store').value, match: $('new-match').value, upc: $('new-upc').value.trim(), alternatives: parseAlternatives($('new-alternatives').value) }); $('new-name').value = ''; $('new-size').value = ''; $('new-upc').value = ''; $('new-alternatives').value = ''; $('new-name').focus(); } catch {}
 };
 $('new-store').onchange = event => selectStore(event.target.value);
 $('close-price').onclick = () => $('price-dialog').close();
@@ -81,7 +121,7 @@ $('delete-offer').onclick = async () => { try { await change({ type: 'remove-off
 $('price-form').onsubmit = async event => {
   event.preventDefault();
   try {
-    await change({ type: 'offer', id: editing.id, offer: { cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim(), source: $('offer-source').value, url: $('offer-url').value.trim(), checked: new Date().toISOString() } });
+    await change({ type: 'offer', id: editing.id, store: editing.store, offer: { cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim(), source: $('offer-source').value, url: $('offer-url').value.trim(), checked: new Date().toISOString() } });
     $('price-dialog').close();
   } catch {}
 };

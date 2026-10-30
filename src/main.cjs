@@ -2,7 +2,7 @@ const { app, BrowserWindow, WebContentsView, ipcMain, dialog, clipboard, Menu } 
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
-const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected } = require('./model.cjs');
+const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices } = require('./model.cjs');
 const { extractScript } = require('./lookup.cjs');
 let main, cart, readyUpdate = false, updateBusy = false;
 let writeQueue = Promise.resolve();
@@ -34,7 +34,7 @@ async function persist(value) {
   return true;
 }
 function tabState() {
-  return { active: activeStore, target: captureTarget, items: cart?.items.map(i => ({ id: i.id, name: `${i.name} · ${STORES.find(s => s.id === i.store).name}` })) || [], stores: STORES.filter(s => !closedStores.has(s.id)).map(s => {
+  return { active: activeStore, target: captureTarget, items: cart?.items.filter(i => STORES.some(s => s.id === i.store)).map(i => ({ id: i.id, name: `${i.name} · ${STORES.find(s => s.id === i.store).name}` })) || [], stores: STORES.filter(s => !closedStores.has(s.id)).map(s => {
     const wc = storeViews.get(s.id)?.webContents;
     return { id: s.id, name: s.name, url: wc && !wc.isDestroyed() ? wc.getURL() : '', loading: wc && !wc.isDestroyed() ? wc.isLoading() : false, canGoBack: wc && !wc.isDestroyed() ? wc.navigationHistory.canGoBack() : false, error: tabErrors.get(s.id) || '' };
   }) };
@@ -131,8 +131,16 @@ ipcMain.handle('store-tab-use-product', async event => {
   closeStoreTab(store, originalView);
   return { cents: product.cents, product: product.product };
 });
-async function searchStores(query, itemId) {
-  // Validate every destination before creating views, then start all four
+function selectedQuery(itemId, choiceId) {
+  const item = cart.items.find(i => i.id === itemId);
+  if (!item) throw Error('Choose a cart item.');
+  const choice = searchChoices(item).find(c => c.id === choiceId);
+  if (!choice) throw Error('Choose a product name or UPC to search.');
+  return choice.query;
+}
+async function searchStores(query, itemId, choiceId) {
+  if (choiceId) query = selectedQuery(itemId, choiceId);
+  // Validate every destination before creating views, then start all active
   // navigations without waiting for the other stores to finish.
   const destinations = STORES.map(store => ({ ...store, url: searchUrl(store.id, query) }));
   if (itemId) setCaptureTarget(itemId);
@@ -143,6 +151,11 @@ async function searchStores(query, itemId) {
   }
   activeStore = 'meijer'; layoutTabs(); updateTabs(); storeShell.show(); storeShell.focus();
   return true;
+}
+function searchStore(store, itemId, choiceId) {
+  if (!STORES.some(s => s.id === store)) throw Error('Choose an active store.');
+  const url = searchUrl(store, selectedQuery(itemId, choiceId)); setCaptureTarget(itemId);
+  storeView(store).webContents.loadURL(url).catch(() => {}); return true;
 }
 async function capture(id, url) {
   if (!validStoreUrl(id, url)) throw Error('Use an HTTPS product link on this store’s own website.');
@@ -188,6 +201,7 @@ app.whenReady().then(async () => {
   handle('change', change => persist(snapshot => applyChange(snapshot, change)));
   handle('open-store', id => { const wc = storeView(id).webContents; if (!wc.getURL()) wc.loadURL(STORES.find(s => s.id === id).home).catch(() => {}); return true; });
   handle('search-stores', searchStores);
+  handle('search-store', searchStore);
   handle('capture-target', setCaptureTarget);
   handle('capture', capture);
   handle('export', async (id, kind) => {

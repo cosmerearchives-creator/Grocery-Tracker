@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { starterCart, migrateCart, validateCart, summarize, checklist, validStoreUrl, searchUrl, STORES, applyChange, applyDetected } = require('../src/model.cjs');
+const { starterCart, migrateCart, validateCart, summarize, checklist, validStoreUrl, searchUrl, STORES, applyChange, applyDetected, searchChoices } = require('../src/model.cjs');
 const offer = { cents: 329, packs: 2, product: 'Sharp cheddar 8 oz', source: 'web-estimate', checked: '2026-10-30T12:00:00Z', url: '' };
 test('missing prices are incomplete, never a zero-dollar complete cart', () => {
   const cart = starterCart(); assert.deepEqual(summarize(cart, 'meijer'), { cents: 0, matched: 0, reviews: 0, count: 4, missing: 4, complete: false });
@@ -55,9 +55,40 @@ test('a price from one store cannot be attached to another store cart', () => {
   assert.throws(() => validateCart(cart));
   assert.throws(() => applyDetected(starterCart(), 'starter-0', 'meijer', { url: 'https://www.walmart.com/ip/123', candidates: [{ cents: 489 }] }));
 });
-test('all four store searches encode product text without changing domains', () => {
+test('all three active store searches encode product text without changing domains', () => {
   const query = 'Milk & cheese #1 / 16 oz';
   for (const store of STORES) { const url = searchUrl(store.id, query); assert.equal(validStoreUrl(store.id, url), true); assert.ok([...new URL(url).searchParams.values()].includes(query)); }
   assert.equal(new URL(searchUrl('gfs', query)).searchParams.get('ps'), query);
   assert.throws(() => searchUrl('aldi', ' ')); assert.throws(() => searchUrl('fake', 'milk'));
+});
+test('Walmart is inactive while its old rows remain readable', () => {
+  assert.deepEqual(STORES.map(s => s.id), ['meijer', 'aldi', 'gfs']);
+  assert.throws(() => searchUrl('walmart', 'milk'));
+  const cart = starterCart(); cart.items.push({ ...cart.items[0], id: 'old-walmart', store: 'walmart', offers: { walmart: { ...offer } } });
+  assert.equal(validateCart(cart).items.at(-1).store, 'walmart'); assert.throws(() => checklist(cart, 'walmart'));
+  assert.throws(() => applyChange(starterCart(), { type: 'add', store: 'walmart', name: 'Milk' }));
+});
+test('UPC and alternative queries preserve leading zeros and separate product searches', () => {
+  const cart = starterCart(); applyChange(cart, { type: 'search-details', id: 'starter-0', upc: '021000615261', alternatives: [{ name: 'Other cheese', upc: '012345678905' }, { name: 'Store brand slices', upc: '' }] });
+  const choices = searchChoices(cart.items[0]);
+  assert.equal(choices.find(c => c.id === 'upc-0').query, '021000615261');
+  assert.equal(choices.find(c => c.id === 'upc-1').query, '012345678905');
+  assert.equal(choices.find(c => c.id === 'name-2').query, 'Store brand slices');
+  assert.throws(() => applyChange(starterCart(), { type: 'search-details', id: 'starter-0', upc: '12345' }));
+});
+test('multiple product options count only the chosen product, with review state preserved', () => {
+  const cart = starterCart();
+  const result = { url: 'https://www.meijer.com/shopping/product/cheese/123', candidates: [{ product: 'Kraft 16 oz', cents: 489, availability: '' }] };
+  applyDetected(cart, 'starter-0', 'meijer', result);
+  applyChange(cart, { type: 'review', id: 'starter-0' });
+  applyDetected(cart, 'starter-0', 'meijer', { ...result, url: 'https://www.meijer.com/shopping/product/other/456', candidates: [{ product: 'Other cheese', cents: 329 }] });
+  assert.equal(cart.items[0].priceOptions.length, 2); assert.equal(summarize(cart, 'meijer').cents, 329);
+  applyChange(cart, { type: 'choose-option', id: 'starter-0', index: 0 });
+  assert.equal(summarize(cart, 'meijer').cents, 489); assert.equal(cart.items[0].offers.meijer.needsReview, false);
+  assert.match(checklist(cart, 'meijer'), /SELECTED: Kraft 16 oz/); assert.doesNotMatch(checklist(cart, 'meijer'), /SELECTED: Other cheese/);
+  applyChange(cart, { type: 'remove-offer', id: 'starter-0' }); assert.equal(cart.items[0].priceOptions.length, 1); assert.equal(summarize(cart, 'meijer').cents, 329);
+});
+test('saving a different store option creates only that store entry', () => {
+  const cart = starterCart(); applyChange(cart, { type: 'offer', id: 'starter-0', store: 'gfs', offer: { ...offer } });
+  assert.equal(summarize(cart, 'gfs').count, 1); assert.equal(summarize(cart, 'aldi').count, 0); assert.equal(cart.items[0].offers.meijer, undefined);
 });
