@@ -1,3 +1,5 @@
 *{box-sizing:border-box}body{margin:0;background:#f4f5ef;color:#243b2d;font:13px 'Segoe UI',sans-serif}nav{display:flex;height:43px;background:#203c2d;padding:6px 10px 0;gap:5px}button,select{font:inherit;cursor:pointer;border:1px solid #d5ddce;background:white;color:#243b2d;border-radius:6px;padding:5px 12px}nav button{flex:1;border:0;background:#36513d;color:#dae4d5;border-radius:7px 7px 0 0}nav button[aria-selected=true]{background:#f4f5ef;color:#203c2d;font-weight:600}button:focus-visible,select:focus-visible{outline:3px solid #accc77;outline-offset:-3px}.toolbar{height:45px;display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid #d9dfd2}#address{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#677861}#target{max-width:180px}#use-product{background:#28583e;color:white;white-space:nowrap}#status{font-size:11px;max-width:235px}button:disabled{opacity:.4}
 
 #done{padding:40px;text-align:center;font-size:16px;color:#55704c}#done[hidden]{display:none}
+
+#save-alternative{background:#eef4df;border-color:#aebf94;white-space:nowrap}#status{max-width:190px}#target{max-width:165px}

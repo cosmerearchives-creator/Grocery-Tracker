@@ -116,8 +116,9 @@ function closeStoreTab(id, originalView) {
   }
   layoutTabs(); updateTabs();
 }
-ipcMain.handle('store-tab-use-product', async event => {
+ipcMain.handle('store-tab-use-product', async (event, mode = 'main') => {
   trustedTabs(event);
+  if (!['main', 'alternative'].includes(mode)) throw Error('Choose Use this price or Save as alternative.');
   const itemId = captureTarget, store = activeStore;
   if (!cart.items.some(i => i.id === itemId)) throw Error('Choose a cart item beside Use this price first.');
   const originalView = storeViews.get(store);
@@ -127,9 +128,10 @@ ipcMain.handle('store-tab-use-product', async event => {
   if (!result.candidates.length) throw Error(result.reason || 'No price was detected on this page.');
   const product = result.candidates[0];
   if (!originalView || originalView.webContents.isDestroyed() || originalView.webContents.getURL() !== result.url) throw Error('The product page changed. Try again on the intended product.');
-  await persist(snapshot => applyDetected(snapshot, itemId, store, result));
-  closeStoreTab(store, originalView);
-  return { cents: product.cents, product: product.product };
+  const asAlternative = mode === 'alternative';
+  await persist(snapshot => applyDetected(snapshot, itemId, store, result, asAlternative));
+  if (!asAlternative) closeStoreTab(store, originalView);
+  return { cents: product.cents, product: product.product, asAlternative };
 });
 function selectedQuery(itemId, choiceId) {
   const item = cart.items.find(i => i.id === itemId);
