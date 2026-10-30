@@ -16,7 +16,7 @@
 <div class="two"><label>Price per package ($)<input id="offer-price" type="number" min="0.01" max="100000" step="0.01" required></label><label>Packages needed per cart quantity<input id="offer-packs" type="number" min="1" max="999" step="1" value="1" required></label></div>
 <label>Price source<select id="offer-source"><option value="manual">Manually entered estimate</option><option value="shelf">Shelf / receipt price I verified</option><option value="web-estimate">Online price estimate</option></select></label>
 <label>Store product link (optional)<input id="offer-url" type="url" placeholder="https://…"></label><div class="lookup-row"><button type="button" id="lookup">Try automatic price lookup</button><span id="lookup-status" role="status"></span></div>
-<p class="help">Sign in and select Marion using the store card first. Lookup opens the product page and reads published product metadata. Check the product, pack size, store and availability before saving. Some sites may not support lookup or embedded sign-in.</p>
+<p class="help">Use Search all 4 stores on a cart item to open searches in one tabbed window. Select Marion in each store. Open a product and use Copy product link, then paste it above. Lookup uses the default version selected by that link. Check the product, pack size, store and availability before saving.</p>
 <label class="checkbox"><input id="offer-confirm" type="checkbox" required> I checked that this product, package quantity and price apply to my comparison.</label>
 <div class="dialog-actions"><button type="button" id="delete-offer">Remove this price</button><button class="primary">Save price</button></div></form></dialog>
 <script src="renderer.js"></script></body></html>

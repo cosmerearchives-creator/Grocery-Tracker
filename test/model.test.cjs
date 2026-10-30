@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { starterCart, validateCart, summarize, checklist, validStoreUrl } = require('../src/model.cjs');
+const { starterCart, validateCart, summarize, checklist, validStoreUrl, searchUrl, STORES } = require('../src/model.cjs');
 const offer = { cents: 329, packs: 2, product: 'Sharp cheddar 8 oz', source: 'web-estimate', checked: '2026-10-30T12:00:00Z', url: '' };
 test('missing prices are incomplete, never a zero-dollar complete cart', () => {
   const cart = starterCart(); assert.deepEqual(summarize(cart, 'aldi'), { cents: 0, matched: 0, missing: 4, complete: false });
@@ -21,4 +21,10 @@ test('store links reject untrusted hosts, schemes and embedded credentials', () 
 test('invalid stored or renderer-supplied values cannot corrupt totals', () => {
   for (const value of [-1, 0, NaN, 1.5, '329']) { const cart = starterCart(); cart.items[0].offers.aldi = { ...offer, cents: value }; assert.throws(() => validateCart(cart)); }
   const cart = starterCart(); cart.items.push(cart.items[0]); assert.throws(() => validateCart(cart));
+});
+test('all four store searches encode product text without changing domains', () => {
+  const query = 'Milk & cheese #1 / 16 oz';
+  for (const store of STORES) { const url = searchUrl(store.id, query); assert.equal(validStoreUrl(store.id, url), true); assert.ok([...new URL(url).searchParams.values()].includes(query)); }
+  assert.equal(new URL(searchUrl('gfs', query)).searchParams.get('ps'), query);
+  assert.throws(() => searchUrl('aldi', ' ')); assert.throws(() => searchUrl('fake', 'milk'));
 });

@@ -6,21 +6,22 @@ A Windows grocery comparison cart for Meijer, ALDI, Walmart, and Gordon Food Ser
 
 Download the **Grocery Tracker Setup** `.exe` from [Releases](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). Run the installer, then open Grocery Tracker. This first release is unsigned; Windows may display a publisher/reputation warning.
 
-## Version 0.1
+## Version 0.2
 
 - Starter cart: Kraft American Singles, regular Red Bull 16 fl oz, gallon Vitamin D whole milk, and sharp cheddar shredded cheese.
 - Add/remove groceries, adjust quantities and sizes, and choose exact-brand or comparable-brand matching. Matching preferences are recorded for your comparison; automatic cross-store product matching is not implemented yet.
-- Enter each store's package price and number of packages needed per cart quantity. This accounts for different package sizes. Unit-price normalization is planned, not implemented in v0.1.
+- Enter each store's package price and number of packages needed per cart quantity. This accounts for different package sizes. Unit-price normalization is planned, not implemented yet.
 - See four store subtotals and price coverage. Only complete carts can receive the lowest-total badge. Estimates exclude tax and conditional coupons.
-- Dedicated persistent browser sessions for each store, separated from your normal browser. Use **Sign in / choose Marion** to select your local store. Embedded sign-in or store automation may be blocked by the retailer; there is no bypass.
-- Experimental product lookup: paste a store product URL into the price dialog, then choose **Try automatic price lookup**. It reads published USD product-offer metadata from that page. It does not read passwords, forms, cookies or browser storage. You must confirm product, package count, availability and Marion location before saving.
+- **Search all 4 stores** on each cart item opens concurrent searches in one store window, with Meijer, ALDI, Walmart, and Gordon Food Service tabs. These are the stores' own search results, not automatically matched price results. Each tab keeps its own persistent browser session, separate from your normal browser. Use **Sign in / choose Marion** to select your local store. Embedded sign-in or store automation may be blocked by the retailer; there is no bypass.
+- Store tabs include Back, Reload and **Copy product link**. Find a product, copy its link, and paste it into that store's price dialog in your cart.
+- Experimental product lookup uses the default version on the linked page. It distinguishes variants using product/offer links, the primary product name, selected options, or product-specific current-price metadata. It never chooses an arbitrary first or cheapest size. If the default cannot be identified, enter the displayed price manually. It does not read passwords, credentials, cookies or browser storage. You must confirm product, package count, availability and Marion location before saving.
 - Copy a full shopping checklist to paste into Google Docs/Keep, or save a text file. Direct Google account integration is not included.
 - Cart saves automatically on your computer.
 - Installed Windows app checks GitHub Releases on startup and every four hours, downloads updates, and offers **Save & restart to update**. Manual update check is also included. Update failures do not block the cart.
 
 ## First-version limits
 
-There are **no prefilled or invented local prices**. A fetched website price is an online estimate, not proof of a Marion shelf price. Product search, scheduled price refresh, automatic equivalents, loyalty coupons, and guaranteed access to every store are not implemented. If a lookup finds no single available offer, enter the price manually. Store locations and package sizes must be checked on the actual store page. Changing an item's size or matching preference clears previous offers to avoid stale comparisons.
+There are **no prefilled or invented local prices**. A fetched website price is an online estimate, not proof of a Marion shelf price. Consolidated search results inside the cart, scheduled price refresh, automatic equivalents, loyalty coupons, and guaranteed access to every store are not implemented. Store searches may require sign-in, location selection, or verification before showing results. If lookup cannot identify the default available version, enter the price manually. Store locations and package sizes must be checked on the actual store page. Changing an item's size or matching preference clears previous offers to avoid stale comparisons.
 
 The first published release supplies the update feed. Development runs do not update themselves. Publishing code alone does not release an update. Release filenames use explicit hyphens so GitHub upload names match the updater metadata. Verification: packaged v0.1.0 successfully discovered and downloaded the published v0.1.1 installer and displayed the restart action. The final restart/install step has not yet been tested end to end.
 

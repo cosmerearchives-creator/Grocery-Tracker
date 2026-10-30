@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('grocery', {
   save: cart => ipcRenderer.invoke('save', cart),
   stores: () => ipcRenderer.invoke('stores'),
   openStore: store => ipcRenderer.invoke('open-store', store),
+  searchStores: query => ipcRenderer.invoke('search-stores', query),
   capture: (store, url) => ipcRenderer.invoke('capture', store, url),
   export: (store, kind) => ipcRenderer.invoke('export', store, kind),
   checkUpdate: () => ipcRenderer.invoke('check-update'),

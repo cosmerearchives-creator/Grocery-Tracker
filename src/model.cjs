@@ -8,6 +8,17 @@ function validStoreUrl(id, value) {
   const store = STORES.find(s => s.id === id);
   try { const u = new URL(value); return !!store && u.protocol === 'https:' && !u.username && !u.password && store.hosts.some(h => u.hostname === h || u.hostname.endsWith('.' + h)); } catch { return false; }
 }
+function searchUrl(id, query) {
+  if (typeof query !== 'string' || !query.trim() || query.length > 300) throw Error('Enter an item name to search.');
+  const destinations = {
+    meijer: ['https://www.meijer.com/shopping/search.html', 'text'],
+    aldi: ['https://www.aldi.us/store/aldi/search', 'search_term'],
+    walmart: ['https://www.walmart.com/search', 'q'],
+    gfs: ['https://gfsstore.com/', 'ps']
+  };
+  const config = destinations[id]; if (!config) throw Error('Unknown store.');
+  const url = new URL(config[0]); url.searchParams.set(config[1], query.trim()); return url.href;
+}
 function starterCart() {
   return { schema: 1, items: [
     ['Kraft American Singles', 'Kraft', 'Compare package sizes', 'exact'],
@@ -45,4 +56,4 @@ function checklist(cart, store) {
     return `☐ ${i.quantity} × ${i.name}${i.size ? ' — ' + i.size : ''}${o ? ` | ${o.product} | ${o.packs} package(s) per quantity | ${money(o.cents * o.packs * i.quantity)} (${o.source})` : ' | PRICE MISSING'}`;
   }), '', `${total.complete ? 'Estimated subtotal' : 'Known subtotal (incomplete)'}: ${money(total.cents)}`, `${total.missing} item(s) without a price. Taxes and conditional coupons excluded.`, 'Check products, sizes, store location and prices before shopping.'].join('\n');
 }
-module.exports = { STORES, validStoreUrl, starterCart, validateCart, summarize, money, checklist };
+module.exports = { STORES, validStoreUrl, searchUrl, starterCart, validateCart, summarize, money, checklist };

@@ -52,7 +52,12 @@ function render() {
     const increment = button('+', () => { if (item.quantity < 999) { item.quantity++; save(); render(); } }); increment.setAttribute('aria-label', `Increase ${item.name}`);
     quantity.append(decrement, el('span', item.quantity), increment);
     const remove = button('Remove', () => { if (window.confirm(`Remove ${item.name} from your cart?`)) { cart.items = cart.items.filter(i => i.id !== item.id); save(); render(); } }, 'remove');
-    top.append(detail, quantity, remove); row.append(top);
+    const search = button('Search all 4 stores ↗', async () => {
+      const size = /^(choose|compare)\b/i.test(item.size) ? '' : item.size;
+      await grocery.searchStores([item.name, size].filter(Boolean).join(' '));
+      message('Searches opened in one store window. Choose a store tab, then a product. Use Copy product link to look up its default version.');
+    }, 'search-stores');
+    top.append(detail, search, quantity, remove); row.append(top);
     const offers = el('div', undefined, 'offer-grid');
     for (const store of stores) {
       const o = item.offers[store.id];
@@ -108,10 +113,10 @@ $('lookup').onclick = async () => {
     if (editing !== context) return;
     const unique = [...new Map(result.candidates.map(c => [c.product + c.cents, c])).values()];
     const available = unique.filter(c => !/OutOfStock|Discontinued|SoldOut/i.test(c.availability));
-    if (available.length !== 1) { $('lookup-status').textContent = available.length ? 'Multiple offers found. Enter the correct product price from the store page.' : 'No single available USD price found. You can enter the price from the store page.'; return; }
+    if (available.length !== 1) { $('lookup-status').textContent = result.reason || 'The default version could not be identified. Enter the displayed price manually.'; return; }
     const p = available[0];
     $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2); $('offer-url').value = result.url; $('offer-source').value = 'web-estimate'; $('offer-confirm').checked = false;
-    $('lookup-status').textContent = 'Price found. Verify Marion, product size and availability before saving.';
+    $('lookup-status').textContent = (result.reason || 'Default version found.') + ' Verify Marion, size and availability before saving.';
   } catch (e) { $('lookup-status').textContent = e.message; }
   finally { $('lookup').disabled = false; }
 };

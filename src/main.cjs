@@ -1,11 +1,14 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, dialog, clipboard, Menu } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
-const { STORES, validStoreUrl, starterCart, validateCart, checklist } = require('./model.cjs');
+const { STORES, validStoreUrl, searchUrl, starterCart, validateCart, checklist } = require('./model.cjs');
+const { extractScript } = require('./lookup.cjs');
 let main, cart, readyUpdate = false, updateBusy = false;
 let writeQueue = Promise.resolve();
-const windows = new Map();
+const storeViews = new Map();
+let storeShell, activeStore = 'meijer';
+const tabErrors = new Map();
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (main && !main.isDestroyed()) { if (main.isMinimized()) main.restore(); main.focus(); } });
 const cartPath = () => path.join(app.getPath('userData'), 'cart.json');
@@ -23,53 +26,93 @@ async function persist(value) {
   await writeQueue;
   return true;
 }
-function storeWindow(id) {
-  const store = STORES.find(s => s.id === id); if (!store) throw Error('Unknown store.');
-  if (windows.has(id) && !windows.get(id).isDestroyed()) { const w = windows.get(id); w.show(); w.focus(); return w; }
-  const w = new BrowserWindow({ width: 1140, height: 820, title: `${store.name} — Select Marion, Ohio`, webPreferences: { partition: `persist:store-${id}`, nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true } });
-  // Store content has no preload and no access to the local app API.
-  w.webContents.setWindowOpenHandler(({ url }) => {
-    if (validStoreUrl(id, url)) w.loadURL(url).catch(() => {});
-    return { action: 'deny' };
-  });
-  w.webContents.on('will-navigate', (event, url) => { if (!validStoreUrl(id, url)) event.preventDefault(); });
-  w.webContents.on('will-redirect', (event, url) => { if (!validStoreUrl(id, url)) event.preventDefault(); });
-  w.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-  w.webContents.session.setPermissionCheckHandler(() => false);
-  w.on('closed', () => windows.delete(id)); windows.set(id, w);
-  w.loadURL(store.home).catch(() => {});
-  return w;
+function tabState() {
+  return { active: activeStore, stores: STORES.map(s => {
+    const wc = storeViews.get(s.id)?.webContents;
+    return { id: s.id, name: s.name, url: wc && !wc.isDestroyed() ? wc.getURL() : '', loading: wc && !wc.isDestroyed() ? wc.isLoading() : false, canGoBack: wc && !wc.isDestroyed() ? wc.navigationHistory.canGoBack() : false, error: tabErrors.get(s.id) || '' };
+  }) };
 }
-// Reads product metadata only, never forms, passwords, cookies, or page storage.
-const extractScript = `(() => {
-  const products = [];
-  const visit = (v, depth = 0) => {
-    if (!v || typeof v !== 'object' || depth > 12 || products.length > 30) return;
-    if (Array.isArray(v)) { v.slice(0, 100).forEach(x => visit(x, depth + 1)); return; }
-    if ([].concat(v['@type'] || []).includes('Product')) products.push(v);
-    for (const [key, val] of Object.entries(v)) if (key !== 'offers') visit(val, depth + 1);
-  };
-  for (const s of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 30)) {
-    if (s.textContent.length > 2000000) continue;
-    try { visit(JSON.parse(s.textContent)); } catch {}
+function updateTabs() { if (storeShell && !storeShell.isDestroyed()) storeShell.webContents.send('store-tabs-state', tabState()); }
+function layoutTabs() {
+  if (!storeShell || storeShell.isDestroyed()) return;
+  const [width, height] = storeShell.getContentSize();
+  for (const [id, view] of storeViews) { view.setBounds({ x: 0, y: 88, width, height: Math.max(1, height - 88) }); view.setVisible(id === activeStore); }
+}
+function ensureStoreShell() {
+  if (storeShell && !storeShell.isDestroyed()) return;
+  storeShell = new BrowserWindow({ width: 1200, height: 860, minWidth: 850, minHeight: 600, title: 'Grocery Tracker — Stores', webPreferences: { preload: path.join(__dirname, 'store-tabs-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
+  storeShell.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  storeShell.webContents.on('will-navigate', e => e.preventDefault());
+  storeShell.on('resize', layoutTabs);
+  storeShell.on('closed', () => {
+    for (const view of storeViews.values()) if (!view.webContents.isDestroyed()) view.webContents.close();
+    storeViews.clear(); tabErrors.clear(); storeShell = null;
+  });
+  storeShell.loadFile(path.join(__dirname, 'store-tabs.html')).catch(() => {});
+}
+function storeView(id, focus = true) {
+  const store = STORES.find(s => s.id === id); if (!store) throw Error('Unknown store.');
+  ensureStoreShell();
+  let view = storeViews.get(id);
+  if (!view || view.webContents.isDestroyed()) {
+    view = new WebContentsView({ webPreferences: { partition: `persist:store-${id}`, nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, backgroundThrottling: false } });
+    storeViews.set(id, view); storeShell.contentView.addChildView(view);
+    const wc = view.webContents;
+    // Remote content has no preload or access to either local app API.
+    wc.setWindowOpenHandler(({ url }) => {
+      if (validStoreUrl(id, url)) wc.loadURL(url).catch(() => {});
+      else { tabErrors.set(id, 'This external page cannot open inside this store tab.'); updateTabs(); }
+      return { action: 'deny' };
+    });
+    for (const name of ['will-navigate', 'will-redirect']) wc.on(name, (event, url) => { if (!validStoreUrl(id, url)) { event.preventDefault(); tabErrors.set(id, 'The store tried to open an unsupported external page.'); updateTabs(); } });
+    wc.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+    wc.session.setPermissionCheckHandler(() => false);
+    wc.on('did-start-loading', () => { tabErrors.delete(id); updateTabs(); });
+    for (const event of ['did-stop-loading', 'did-navigate', 'did-navigate-in-page']) wc.on(event, updateTabs);
+    wc.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => { if (isMainFrame && code !== -3) { tabErrors.set(id, 'Page could not load. Try Reload or check your connection.'); updateTabs(); } });
   }
-  const results = [];
-  for (const p of products) for (const o of [].concat(p.offers || [])) {
-    if (!o || !['USD', 'usd'].includes(o.priceCurrency)) continue;
-    const price = Number(o.price);
-    if (!Number.isFinite(price) || price <= 0 || price > 100000) continue;
-    results.push({ product: String(p.name || document.title).slice(0, 300), cents: Math.round(price * 100), availability: String(o.availability || '').slice(0, 120) });
+  if (focus) { activeStore = id; storeShell.show(); storeShell.focus(); }
+  layoutTabs(); updateTabs(); return view;
+}
+function trustedTabs(event) {
+  if (!storeShell || event.sender !== storeShell.webContents || event.senderFrame !== storeShell.webContents.mainFrame) throw Error('Untrusted store-tab request.');
+}
+ipcMain.handle('store-tabs-state', event => { trustedTabs(event); return tabState(); });
+ipcMain.handle('store-tab-select', (event, id) => {
+  trustedTabs(event); const view = storeView(id);
+  if (!view.webContents.getURL()) view.webContents.loadURL(STORES.find(s => s.id === id).home).catch(() => {});
+  return true;
+});
+ipcMain.handle('store-tab-navigate', (event, action) => {
+  trustedTabs(event); const wc = storeViews.get(activeStore)?.webContents; if (!wc || wc.isDestroyed()) return false;
+  if (action === 'back' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+  else if (action === 'reload') wc.reload();
+  return true;
+});
+ipcMain.handle('store-tab-copy-url', event => {
+  trustedTabs(event); const url = storeViews.get(activeStore)?.webContents.getURL();
+  if (!validStoreUrl(activeStore, url)) throw Error('No store product link is open.');
+  clipboard.writeText(url); return true;
+});
+async function searchStores(query) {
+  // Validate every destination before creating views, then start all four
+  // navigations without waiting for the other stores to finish.
+  const destinations = STORES.map(store => ({ ...store, url: searchUrl(store.id, query) }));
+  for (const store of destinations) {
+    const wc = storeView(store.id, false).webContents;
+    wc.loadURL(store.url).catch(() => {});
   }
-  return { url: location.href, candidates: results.slice(0, 12) };
-})()`;
+  activeStore = 'meijer'; layoutTabs(); updateTabs(); storeShell.show(); storeShell.focus();
+  return true;
+}
 async function capture(id, url) {
   if (!validStoreUrl(id, url)) throw Error('Use an HTTPS product link on this store’s own website.');
-  const w = storeWindow(id);
-  await w.loadURL(url);
+  const wc = storeView(id).webContents;
+  await wc.loadURL(url);
   // Give dynamic storefronts time to populate product metadata.
   await new Promise(resolve => setTimeout(resolve, 1800));
-  if (w.isDestroyed() || !validStoreUrl(id, w.webContents.getURL())) throw Error('Store page is unavailable.');
-  const result = await w.webContents.executeJavaScript(extractScript, false);
+  if (wc.isDestroyed() || !validStoreUrl(id, wc.getURL())) throw Error('Store page is unavailable.');
+  const result = await wc.executeJavaScript(extractScript, false);
   if (!result || !validStoreUrl(id, result.url)) throw Error('Could not read this product page.');
   return result;
 }
@@ -87,13 +130,15 @@ app.whenReady().then(async () => {
     if (error.code !== 'ENOENT') { loadError = true; await fs.copyFile(cartPath(), cartPath() + '.backup-' + Date.now()).catch(() => {}); }
   }
   main = new BrowserWindow({ width: 1360, height: 930, minWidth: 980, minHeight: 700, backgroundColor: '#f4f5ef', title: 'Grocery Tracker', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
+  main.on('closed', () => { if (storeShell && !storeShell.isDestroyed()) storeShell.close(); });
   Menu.setApplicationMenu(null);
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', event => event.preventDefault());
   handle('load', () => ({ cart, version: app.getVersion(), loadError }));
   handle('stores', () => STORES.map(({ id, name }) => ({ id, name })));
   handle('save', persist);
-  handle('open-store', id => { storeWindow(id); return true; });
+  handle('open-store', id => { const wc = storeView(id).webContents; if (!wc.getURL()) wc.loadURL(STORES.find(s => s.id === id).home).catch(() => {}); return true; });
+  handle('search-stores', searchStores);
   handle('capture', capture);
   handle('export', async (id, kind) => {
     await writeQueue;
