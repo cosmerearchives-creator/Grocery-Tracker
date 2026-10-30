@@ -8,6 +8,10 @@ Download the **Grocery Tracker Setup** `.exe` from [Releases](https://github.com
 
 ## Version 0.2
 
+### 0.2.2 product autofill
+
+The store window now has **Use this product** instead of copying a link. Search from a cart item, open a product in a store tab, and click the button: the app detects the displayed price, brings the cart forward, and fills that item's price dialog with the product, package, URL and detected price. Review and save to include it in totals. A cart-item selector in the store toolbar lets you change which item receives the result. Failed lookup leaves existing cart prices unchanged.
+
 ### 0.2.1 lookup fix
 
 Meijer pages with prices in visible selected-version controls are now supported even when product-price JSON-LD is absent. The reader matches the selected controls to the page's product ID, excludes other flavors/sizes and struck-through prices, and includes the selected package size. Lookup preserves an already-open identical product URL and retries missing data for up to 12 seconds while the page loads. Verified on the live Kraft Singles 24-slice / 16-ounce page at $4.89; prices remain store-dependent estimates.
@@ -17,7 +21,7 @@ Meijer pages with prices in visible selected-version controls are now supported 
 - Enter each store's package price and number of packages needed per cart quantity. This accounts for different package sizes. Unit-price normalization is planned, not implemented yet.
 - See four store subtotals and price coverage. Only complete carts can receive the lowest-total badge. Estimates exclude tax and conditional coupons.
 - **Search all 4 stores** on each cart item opens concurrent searches in one store window, with Meijer, ALDI, Walmart, and Gordon Food Service tabs. These are the stores' own search results, not automatically matched price results. Each tab keeps its own persistent browser session, separate from your normal browser. Use **Sign in / choose Marion** to select your local store. Embedded sign-in or store automation may be blocked by the retailer; there is no bypass.
-- Store tabs include Back, Reload and **Copy product link**. Find a product, copy its link, and paste it into that store's price dialog in your cart.
+- Store tabs include Back, Reload and **Use this product**. Find a product and click the button to detect its price and autofill the selected cart item's price dialog. You can still paste product links manually in a price dialog.
 - Experimental product lookup uses the default version on the linked page. It distinguishes variants using product/offer links, the primary product name, selected options, or product-specific current-price metadata. It never chooses an arbitrary first or cheapest size. If the default cannot be identified, enter the displayed price manually. It does not read passwords, credentials, cookies or browser storage. You must confirm product, package count, availability and Marion location before saving.
 - Copy a full shopping checklist to paste into Google Docs/Keep, or save a text file. Direct Google account integration is not included.
 - Cart saves automatically on your computer.

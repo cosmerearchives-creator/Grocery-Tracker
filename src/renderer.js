@@ -54,8 +54,9 @@ function render() {
     const remove = button('Remove', () => { if (window.confirm(`Remove ${item.name} from your cart?`)) { cart.items = cart.items.filter(i => i.id !== item.id); save(); render(); } }, 'remove');
     const search = button('Search all 4 stores ↗', async () => {
       const size = /^(choose|compare)\b/i.test(item.size) ? '' : item.size;
-      await grocery.searchStores([item.name, size].filter(Boolean).join(' '));
-      message('Searches opened in one store window. Choose a store tab, then a product. Use Copy product link to look up its default version.');
+      await saveChain;
+      await grocery.searchStores([item.name, size].filter(Boolean).join(' '), item.id);
+      message('Searches opened in one store window. Open a product and choose Use this product to detect its price and fill your cart.');
     }, 'search-stores');
     top.append(detail, search, quantity, remove); row.append(top);
     const offers = el('div', undefined, 'offer-grid');
@@ -72,6 +73,7 @@ function render() {
   }
 }
 function openPrice(item, store) {
+  saveChain.then(() => { if (editing?.item.id === item.id) return grocery.setCaptureTarget(item.id); }).catch(e => message(e.message));
   editing = { item, store };
   const o = item.offers[store.id];
   $('price-store').textContent = store.name;
@@ -84,8 +86,22 @@ function openPrice(item, store) {
   $('offer-confirm').checked = false;
   $('lookup-status').textContent = '';
   $('delete-offer').disabled = !o;
-  $('price-dialog').showModal();
+  if (!$('price-dialog').open) $('price-dialog').showModal();
 }
+function fillDetected(result) {
+  const available = result.candidates.filter(c => !/OutOfStock|Discontinued|SoldOut/i.test(c.availability));
+  if (available.length !== 1) { $('lookup-status').textContent = result.reason || 'No single product price was detected.'; return; }
+  const p = available[0];
+  $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2);
+  $('offer-url').value = result.url; $('offer-source').value = 'web-estimate';
+  $('offer-packs').value = 1; $('offer-confirm').checked = false;
+  $('lookup-status').textContent = `Detected ${format(p.cents)} per package. ` + (result.reason || '') + ' Verify Marion, size and availability before saving.';
+}
+grocery.onProductDetected(data => {
+  const item = cart?.items.find(i => i.id === data.itemId), store = stores?.find(s => s.id === data.store);
+  if (!item || !store) { message('The selected cart item is no longer available.'); return; }
+  openPrice(item, store); fillDetected(data.result);
+});
 $('add-form').addEventListener('submit', event => {
   event.preventDefault();
   const name = $('new-name').value.trim(); if (!name) return;
@@ -111,12 +127,7 @@ $('lookup').onclick = async () => {
   try {
     const result = await grocery.capture(context.store.id, $('offer-url').value.trim());
     if (editing !== context) return;
-    const unique = [...new Map(result.candidates.map(c => [c.product + c.cents, c])).values()];
-    const available = unique.filter(c => !/OutOfStock|Discontinued|SoldOut/i.test(c.availability));
-    if (available.length !== 1) { $('lookup-status').textContent = result.reason || 'The default version could not be identified. Enter the displayed price manually.'; return; }
-    const p = available[0];
-    $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2); $('offer-url').value = result.url; $('offer-source').value = 'web-estimate'; $('offer-confirm').checked = false;
-    $('lookup-status').textContent = (result.reason || 'Default version found.') + ' Verify Marion, size and availability before saving.';
+    fillDetected(result);
   } catch (e) { $('lookup-status').textContent = e.message; }
   finally { $('lookup').disabled = false; }
 };

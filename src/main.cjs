@@ -8,6 +8,7 @@ let main, cart, readyUpdate = false, updateBusy = false;
 let writeQueue = Promise.resolve();
 const storeViews = new Map();
 let storeShell, activeStore = 'meijer';
+let captureTarget = null;
 const tabErrors = new Map();
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (main && !main.isDestroyed()) { if (main.isMinimized()) main.restore(); main.focus(); } });
@@ -22,12 +23,14 @@ async function persist(value) {
     await fs.writeFile(cartPath() + '.tmp', JSON.stringify(snapshot, null, 2), { mode: 0o600 });
     await fs.rename(cartPath() + '.tmp', cartPath());
     cart = snapshot;
+    if (captureTarget && !cart.items.some(i => i.id === captureTarget)) captureTarget = null;
+    updateTabs();
   });
   await writeQueue;
   return true;
 }
 function tabState() {
-  return { active: activeStore, stores: STORES.map(s => {
+  return { active: activeStore, target: captureTarget, items: cart?.items.map(i => ({ id: i.id, name: i.name })) || [], stores: STORES.map(s => {
     const wc = storeViews.get(s.id)?.webContents;
     return { id: s.id, name: s.name, url: wc && !wc.isDestroyed() ? wc.getURL() : '', loading: wc && !wc.isDestroyed() ? wc.isLoading() : false, canGoBack: wc && !wc.isDestroyed() ? wc.navigationHistory.canGoBack() : false, error: tabErrors.get(s.id) || '' };
   }) };
@@ -89,15 +92,31 @@ ipcMain.handle('store-tab-navigate', (event, action) => {
   else if (action === 'reload') wc.reload();
   return true;
 });
-ipcMain.handle('store-tab-copy-url', event => {
-  trustedTabs(event); const url = storeViews.get(activeStore)?.webContents.getURL();
-  if (!validStoreUrl(activeStore, url)) throw Error('No store product link is open.');
-  clipboard.writeText(url); return true;
+function setCaptureTarget(id) {
+  if (id === null || id === '') { captureTarget = null; updateTabs(); return true; }
+  if (!cart.items.some(i => i.id === id)) throw Error('Choose an item from your cart.');
+  captureTarget = id; updateTabs(); return true;
+}
+ipcMain.handle('store-tab-target', (event, id) => { trustedTabs(event); return setCaptureTarget(id); });
+ipcMain.handle('store-tab-use-product', async event => {
+  trustedTabs(event);
+  const itemId = captureTarget, store = activeStore;
+  if (!cart.items.some(i => i.id === itemId)) throw Error('Choose a cart item beside Use this product first.');
+  const url = storeViews.get(store)?.webContents.getURL();
+  if (!validStoreUrl(store, url)) throw Error('Open a store product page first.');
+  const result = await capture(store, url);
+  if (!cart.items.some(i => i.id === itemId)) throw Error('That item was removed from your cart.');
+  if (!result.candidates.length) throw Error(result.reason || 'No price was detected on this page.');
+  const product = result.candidates[0];
+  main.webContents.send('product-detected', { itemId, store, result });
+  if (main.isMinimized()) main.restore(); main.show(); main.focus();
+  return { cents: product.cents, product: product.product };
 });
-async function searchStores(query) {
+async function searchStores(query, itemId) {
   // Validate every destination before creating views, then start all four
   // navigations without waiting for the other stores to finish.
   const destinations = STORES.map(store => ({ ...store, url: searchUrl(store.id, query) }));
+  if (itemId) setCaptureTarget(itemId);
   for (const store of destinations) {
     const wc = storeView(store.id, false).webContents;
     wc.loadURL(store.url).catch(() => {});
@@ -145,6 +164,7 @@ app.whenReady().then(async () => {
   handle('save', persist);
   handle('open-store', id => { const wc = storeView(id).webContents; if (!wc.getURL()) wc.loadURL(STORES.find(s => s.id === id).home).catch(() => {}); return true; });
   handle('search-stores', searchStores);
+  handle('capture-target', setCaptureTarget);
   handle('capture', capture);
   handle('export', async (id, kind) => {
     await writeQueue;
