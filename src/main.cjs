@@ -2,11 +2,12 @@ const { app, BrowserWindow, WebContentsView, ipcMain, dialog, clipboard, Menu } 
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
-const { STORES, validStoreUrl, searchUrl, starterCart, validateCart, checklist } = require('./model.cjs');
+const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected } = require('./model.cjs');
 const { extractScript } = require('./lookup.cjs');
 let main, cart, readyUpdate = false, updateBusy = false;
 let writeQueue = Promise.resolve();
 const storeViews = new Map();
+const closedStores = new Set();
 let storeShell, activeStore = 'meijer';
 let captureTarget = null;
 const tabErrors = new Map();
@@ -17,20 +18,23 @@ const sendStatus = (text, ready = false) => { if (main && !main.isDestroyed()) m
 function trusted(event) { if (!main || event.sender !== main.webContents || event.senderFrame !== main.webContents.mainFrame) throw Error('Untrusted request.'); }
 function handle(name, callback) { ipcMain.handle(name, (event, ...args) => { trusted(event); return callback(...args); }); }
 async function persist(value) {
-  const snapshot = JSON.parse(JSON.stringify(validateCart(value)));
   writeQueue = writeQueue.catch(() => {}).then(async () => {
+    const snapshot = typeof value === 'function' ? JSON.parse(JSON.stringify(cart)) : JSON.parse(JSON.stringify(value));
+    if (typeof value === 'function') value(snapshot);
+    validateCart(snapshot);
     await fs.mkdir(app.getPath('userData'), { recursive: true });
     await fs.writeFile(cartPath() + '.tmp', JSON.stringify(snapshot, null, 2), { mode: 0o600 });
     await fs.rename(cartPath() + '.tmp', cartPath());
     cart = snapshot;
     if (captureTarget && !cart.items.some(i => i.id === captureTarget)) captureTarget = null;
     updateTabs();
+    if (main && !main.isDestroyed()) main.webContents.send('cart-changed', cart);
   });
   await writeQueue;
   return true;
 }
 function tabState() {
-  return { active: activeStore, target: captureTarget, items: cart?.items.map(i => ({ id: i.id, name: i.name })) || [], stores: STORES.map(s => {
+  return { active: activeStore, target: captureTarget, items: cart?.items.map(i => ({ id: i.id, name: `${i.name} · ${STORES.find(s => s.id === i.store).name}` })) || [], stores: STORES.filter(s => !closedStores.has(s.id)).map(s => {
     const wc = storeViews.get(s.id)?.webContents;
     return { id: s.id, name: s.name, url: wc && !wc.isDestroyed() ? wc.getURL() : '', loading: wc && !wc.isDestroyed() ? wc.isLoading() : false, canGoBack: wc && !wc.isDestroyed() ? wc.navigationHistory.canGoBack() : false, error: tabErrors.get(s.id) || '' };
   }) };
@@ -43,6 +47,7 @@ function layoutTabs() {
 }
 function ensureStoreShell() {
   if (storeShell && !storeShell.isDestroyed()) return;
+  closedStores.clear();
   storeShell = new BrowserWindow({ width: 1200, height: 860, minWidth: 850, minHeight: 600, title: 'Grocery Tracker — Stores', webPreferences: { preload: path.join(__dirname, 'store-tabs-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
   storeShell.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   storeShell.webContents.on('will-navigate', e => e.preventDefault());
@@ -56,6 +61,7 @@ function ensureStoreShell() {
 function storeView(id, focus = true) {
   const store = STORES.find(s => s.id === id); if (!store) throw Error('Unknown store.');
   ensureStoreShell();
+  closedStores.delete(id);
   let view = storeViews.get(id);
   if (!view || view.webContents.isDestroyed()) {
     view = new WebContentsView({ webPreferences: { partition: `persist:store-${id}`, nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, backgroundThrottling: false } });
@@ -98,18 +104,31 @@ function setCaptureTarget(id) {
   captureTarget = id; updateTabs(); return true;
 }
 ipcMain.handle('store-tab-target', (event, id) => { trustedTabs(event); return setCaptureTarget(id); });
+function closeStoreTab(id, originalView) {
+  if (!storeShell || storeShell.isDestroyed() || storeViews.get(id) !== originalView) return;
+  storeViews.delete(id); closedStores.add(id); tabErrors.delete(id);
+  storeShell.contentView.removeChildView(originalView);
+  if (!originalView.webContents.isDestroyed()) originalView.webContents.close();
+  if (activeStore === id) activeStore = STORES.find(s => !closedStores.has(s.id))?.id || null;
+  if (activeStore && !storeViews.has(activeStore)) {
+    const next = storeView(activeStore, false).webContents;
+    next.loadURL(STORES.find(s => s.id === activeStore).home).catch(() => {});
+  }
+  layoutTabs(); updateTabs();
+}
 ipcMain.handle('store-tab-use-product', async event => {
   trustedTabs(event);
   const itemId = captureTarget, store = activeStore;
-  if (!cart.items.some(i => i.id === itemId)) throw Error('Choose a cart item beside Use this product first.');
-  const url = storeViews.get(store)?.webContents.getURL();
+  if (!cart.items.some(i => i.id === itemId)) throw Error('Choose a cart item beside Use this price first.');
+  const originalView = storeViews.get(store);
+  const url = originalView?.webContents.getURL();
   if (!validStoreUrl(store, url)) throw Error('Open a store product page first.');
   const result = await capture(store, url);
-  if (!cart.items.some(i => i.id === itemId)) throw Error('That item was removed from your cart.');
   if (!result.candidates.length) throw Error(result.reason || 'No price was detected on this page.');
   const product = result.candidates[0];
-  main.webContents.send('product-detected', { itemId, store, result });
-  if (main.isMinimized()) main.restore(); main.show(); main.focus();
+  if (!originalView || originalView.webContents.isDestroyed() || originalView.webContents.getURL() !== result.url) throw Error('The product page changed. Try again on the intended product.');
+  await persist(snapshot => applyDetected(snapshot, itemId, store, result));
+  closeStoreTab(store, originalView);
   return { cents: product.cents, product: product.product };
 });
 async function searchStores(query, itemId) {
@@ -117,6 +136,7 @@ async function searchStores(query, itemId) {
   // navigations without waiting for the other stores to finish.
   const destinations = STORES.map(store => ({ ...store, url: searchUrl(store.id, query) }));
   if (itemId) setCaptureTarget(itemId);
+  closedStores.clear();
   for (const store of destinations) {
     const wc = storeView(store.id, false).webContents;
     wc.loadURL(store.url).catch(() => {});
@@ -149,7 +169,11 @@ async function checkUpdate() {
 }
 app.whenReady().then(async () => {
   let loadError = false;
-  try { cart = validateCart(JSON.parse(await fs.readFile(cartPath(), 'utf8'))); }
+  try {
+    const raw = JSON.parse(await fs.readFile(cartPath(), 'utf8'));
+    cart = migrateCart(raw);
+    if (raw.schema !== cart.schema) { await fs.copyFile(cartPath(), cartPath() + '.before-store-carts-' + Date.now()); await persist(cart); }
+  }
   catch (error) {
     cart = starterCart();
     if (error.code !== 'ENOENT') { loadError = true; await fs.copyFile(cartPath(), cartPath() + '.backup-' + Date.now()).catch(() => {}); }
@@ -161,7 +185,7 @@ app.whenReady().then(async () => {
   main.webContents.on('will-navigate', event => event.preventDefault());
   handle('load', () => ({ cart, version: app.getVersion(), loadError }));
   handle('stores', () => STORES.map(({ id, name }) => ({ id, name })));
-  handle('save', persist);
+  handle('change', change => persist(snapshot => applyChange(snapshot, change)));
   handle('open-store', id => { const wc = storeView(id).webContents; if (!wc.getURL()) wc.loadURL(STORES.find(s => s.id === id).home).catch(() => {}); return true; });
   handle('search-stores', searchStores);
   handle('capture-target', setCaptureTarget);

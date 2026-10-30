@@ -106,6 +106,21 @@ function extractProduct() {
     result = finish(candidates, 'Using the default product on this page.');
     if (result) return result;
   }
+  if (heading && /(^|\.)meijer\.com$/.test(new URL(pageUrl).hostname) && new URL(pageUrl).pathname.startsWith('/shopping/product/')) {
+    const values = new Set();
+    const panels = [...document.querySelectorAll('[data-cart-eligibility] section[aria-label="Product pricing information"]')].filter(visible);
+    for (const panel of panels) {
+      const container = panel.closest('[data-cart-eligibility]');
+      if (!container?.querySelector('button[data-testid="quantity-input-add-to-cart"][aria-label="Add to Cart"]')) continue;
+      if (container.getAttribute('data-cart-eligibility') !== 'available') continue;
+      for (const node of panel.querySelectorAll('span')) {
+        if (node.children.length || !visible(node) || node.closest('del, s, .line-through')) continue;
+        const price = clean(node.textContent).match(/^\$\s*(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/);
+        if (price) { const cents = Number(price[1].replace(/,/g, '')) * 100 + Number(price[2]); if (cents > 0 && cents <= 10000000) values.add(cents); }
+      }
+    }
+    if (values.size === 1) return { url: pageUrl, candidates: [{ product: title, cents: [...values][0], availability: '' }], reason: 'Using the main product price displayed beside Add to Cart.' };
+  }
   return { url: pageUrl, candidates: [], reason: candidates.length ? 'The page’s default version could not be identified. Enter the displayed price manually.' : 'No readable USD product price found. Enter the displayed price manually.' };
 }
 module.exports = { extractProduct, extractScript: `(${extractProduct.toString()})()` };

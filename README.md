@@ -1,43 +1,42 @@
 # Grocery Tracker
 
-A Windows grocery comparison cart for Meijer, ALDI, Walmart, and Gordon Food Service in Marion, Ohio. Your cart is visual only: the app never submits an order.
+A Windows grocery planner for Meijer, ALDI, Walmart, and Gordon Food Service in Marion, Ohio. Each store has its own cart. The app never places orders.
 
 ## Install
 
-Download the **Grocery Tracker Setup** `.exe` from [Releases](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). Run the installer, then open Grocery Tracker. This first release is unsigned; Windows may display a publisher/reputation warning.
+Download the `.exe` from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). This preview is unsigned, so Windows may display an unknown-publisher message.
 
-## Version 0.2
+## Version 0.3.0
 
-### 0.2.2 product autofill
+- **Independent store carts.** Select a store before adding an item. Products, quantities, sizes and removals apply only to that store. The dashboard shows each cart's own subtotal and price coverage. Different carts are not ranked as identical baskets.
+- **Use this price saves automatically.** Open a product in a store tab and click the button. Its detected product, package, URL and price save directly to that store's cart, one package per cart quantity. The main cart updates without a confirmation dialog or being brought forward.
+- **Needs review.** Automatically saved prices enter totals immediately and carry a badge. Review/edit the price later or click Mark reviewed. Marking reviewed does not turn an online estimate into a verified shelf price. Exports include review flags.
+- **Only the used tab closes.** Saving a price closes that store's tab and preserves the other pages and their sessions. The store window stays open even after the final tab is completed. A new search reopens all four tabs. Failed lookup or saving leaves the tab open.
+- **Meijer main-price fallback.** When selected-option or product-price metadata is absent, the reader checks the main Product pricing information panel associated with Add to Cart. It excludes header totals, recommendations, unit prices and crossed-out prices. Tested on the live Bob's Red Mill Nutritional Yeast, 5 oz page at $7.79 and Kraft Singles, 24 slices / 16 oz at $4.89. Prices can change or vary by store.
+- **Separate exports.** Choose a store and copy its checklist into Docs/Keep, or save a text file. Other stores' items are excluded. There is no direct Google account integration.
+- **Automatic app updates.** Installed Windows builds check GitHub Releases on startup and every four hours, download updates, and offer a restart to install. Manual checking is included. Failed checks do not block the cart.
 
-The store window now has **Use this product** instead of copying a link. Search from a cart item, open a product in a store tab, and click the button: the app detects the displayed price, brings the cart forward, and fills that item's price dialog with the product, package, URL and detected price. Review and save to include it in totals. A cart-item selector in the store toolbar lets you change which item receives the result. Failed lookup leaves existing cart prices unchanged.
+## Searching stores
 
-### 0.2.1 lookup fix
+Search all 4 stores opens four concurrent searches in one window. Select Marion within each retailer; the app does not override store location. Each tab has its own persistent sign-in session, separate from your normal browser. Back and Reload are included. Stores may restrict embedded sign-in or require verification; the app does not bypass those restrictions.
 
-Meijer pages with prices in visible selected-version controls are now supported even when product-price JSON-LD is absent. The reader matches the selected controls to the page's product ID, excludes other flavors/sizes and struck-through prices, and includes the selected package size. Lookup preserves an already-open identical product URL and retries missing data for up to 12 seconds while the page loads. Verified on the live Kraft Singles 24-slice / 16-ounce page at $4.89; prices remain store-dependent estimates.
+The toolbar identifies the cart item being searched. Clicking Use this price on a different retailer creates an independent entry in that retailer's cart, or updates that item's previously created entry there. It does not create empty entries in every store. Quantities can then be edited independently. Use this price counts as accepting that retailer's currently selected product version; no checkout button on the store site is clicked.
 
-- Starter cart: Kraft American Singles, regular Red Bull 16 fl oz, gallon Vitamin D whole milk, and sharp cheddar shredded cheese.
-- Add/remove groceries, adjust quantities and sizes, and choose exact-brand or comparable-brand matching. Matching preferences are recorded for your comparison; automatic cross-store product matching is not implemented yet.
-- Enter each store's package price and number of packages needed per cart quantity. This accounts for different package sizes. Unit-price normalization is planned, not implemented yet.
-- See four store subtotals and price coverage. Only complete carts can receive the lowest-total badge. Estimates exclude tax and conditional coupons.
-- **Search all 4 stores** on each cart item opens concurrent searches in one store window, with Meijer, ALDI, Walmart, and Gordon Food Service tabs. These are the stores' own search results, not automatically matched price results. Each tab keeps its own persistent browser session, separate from your normal browser. Use **Sign in / choose Marion** to select your local store. Embedded sign-in or store automation may be blocked by the retailer; there is no bypass.
-- Store tabs include Back, Reload and **Use this product**. Find a product and click the button to detect its price and autofill the selected cart item's price dialog. You can still paste product links manually in a price dialog.
-- Experimental product lookup uses the default version on the linked page. It distinguishes variants using product/offer links, the primary product name, selected options, or product-specific current-price metadata. It never chooses an arbitrary first or cheapest size. If the default cannot be identified, enter the displayed price manually. It does not read passwords, credentials, cookies or browser storage. You must confirm product, package count, availability and Marion location before saving.
-- Copy a full shopping checklist to paste into Google Docs/Keep, or save a text file. Direct Google account integration is not included.
-- Cart saves automatically on your computer.
-- Installed Windows app checks GitHub Releases on startup and every four hours, downloads updates, and offers **Save & restart to update**. Manual update check is also included. Update failures do not block the cart.
+You can also enter or edit a price manually. The price dialog allows package-count adjustment, source selection, and a product-link lookup. Manually saved/reviewed prices clear the review badge.
 
-## First-version limits
+## Upgrading an older cart
 
-There are **no prefilled or invented local prices**. A fetched website price is an online estimate, not proof of a Marion shelf price. Consolidated search results inside the cart, scheduled price refresh, automatic equivalents, loyalty coupons, and guaranteed access to every store are not implemented. Store searches may require sign-in, location selection, or verification before showing results. If lookup cannot identify the default available version, enter the price manually. Store locations and package sizes must be checked on the actual store page. Changing an item's size or matching preference clears previous offers to avoid stale comparisons.
+The app automatically converts the old shared list into independent store entries. Existing priced entries are split into their respective stores with product details and quantities intact. Unpriced shared rows are kept once in Meijer's cart. A timestamped `cart.json.before-store-carts-*` backup preserves the original file in the app's local data folder. Sign-in sessions are unchanged.
 
-The first published release supplies the update feed. Development runs do not update themselves. Publishing code alone does not release an update. Release filenames use explicit hyphens so GitHub upload names match the updater metadata. Verification: packaged v0.1.0 successfully discovered and downloaded the published v0.1.1 installer and displayed the restart action. The final restart/install step has not yet been tested end to end.
+## Limits
+
+Online prices are estimates, not guaranteed Marion shelf prices. No invented prices are supplied. Unpriced items stay out of known subtotals and are marked missing. Prices exclude taxes and conditional coupons. Automatic cross-store product matching, unit-price normalization, scheduled price refresh, and loyalty-coupon calculation are not implemented. Exact/equivalent matching preferences are stored as guidance for selecting products.
 
 ## Privacy
 
-Cart data and store browser sessions live in Electron's local user-data folder (normally `%APPDATA%/Grocery Tracker`). Neither is included in this repository or release packages. No analytics, app account, checkout integration or cloud cart sync is included. Signing into a store shares information with that store as usual. Do not commit browser profiles, cookies, receipts, credentials or personal carts.
+Cart files, backups, and retailer sessions stay in the local app-data folder. They are not included in the repository or installers. No analytics, app account or cloud cart sync is included. The reader examines public product metadata and product-page markup; it does not read passwords, forms, cookies or page storage. Signing into a retailer shares information with that retailer as usual.
 
-## Development
+## Development and release
 
 Requires Node.js 24 and pnpm 11.25.0:
 
@@ -49,15 +48,12 @@ pnpm start
 pnpm dist
 ```
 
-## Release updates
+Change the version in package.json, commit, and push a matching version tag. The Windows workflow runs tests and publishes the installer, blockmap and latest.yml through GitHub Releases. Main-branch pushes produce build artifacts without publishing an update. No GitHub token is bundled with the app. Update checking and downloads have been verified from an older packaged build; the final restart/install step has not yet been tested end to end.
 
-1. Change `version` in `package.json` and update the lockfile if dependencies changed.
-2. Push the code and a matching tag, e.g. `v0.1.1`.
-3. The Windows workflow tests, packages and publishes the installer, blockmap and `latest.yml` to GitHub Releases using the workflow's built-in token. No GitHub token is bundled in the app.
-4. Confirm the release assets exist and test an older installed version updating to it. Keep the installer, blockmap and metadata from the same build together.
+## Validation
 
-Main-branch pushes also produce downloadable Windows build artifacts without publishing an app update.
+Unit tests cover migration, store isolation, totals, exports, review state, variant selection and Meijer fallback safeguards. Windows UI checks cover automatic saving, tab-only closure (including the last tab), failed-lookup behavior, independent quantities and exports, review clearing, restart persistence, and upgrading an actual old-format cart with an untouched backup.
 
-## Later
+## Far future
 
-Reliable automated local prices and refresh, unit-price comparison, richer equivalent-product matching, and convenient checklist exports. Far future: user-defined comparison groups; behavior remains unspecified until the user describes it.
+User-defined comparison groups are logged as a far-future idea. Their behavior remains unspecified and is not part of this release.

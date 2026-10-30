@@ -2,12 +2,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { extractScript } = require('../src/lookup.cjs');
-function lookup(products, { url = 'https://www.walmart.com/ip/red-bull/16', title = 'Red Bull', options = [], shown = [], selected = [] } = {}) {
+function lookup(products, { url = 'https://www.walmart.com/ip/red-bull/16', title = 'Red Bull', options = [], shown = [], selected = [], panels = [] } = {}) {
   const node = (textContent, attrs = {}, tagName = 'DIV') => ({ textContent, tagName, getAttribute: key => attrs[key] || null, getClientRects: () => [{}] });
   const heading = node(title), scripts = [node(JSON.stringify(products))];
   const context = { URL, location: { href: url }, getComputedStyle: () => ({ visibility: 'visible' }), document: { title, querySelectorAll: selector => {
     if (selector === 'h1') return [heading];
     if (selector.startsWith('a[aria-current')) return selected.map(s => ({ ...node('', { 'data-product-id': s.id, 'data-option-name': s.name }), querySelectorAll: () => s.prices.map(p => ({ ...node(p.text || p), children: [], closest: () => p.crossed ? {} : null })) }));
+    if (selector.startsWith('[data-cart-eligibility]')) return panels.map(p => ({ ...node(''), closest: () => ({ getAttribute: () => p.available === false ? 'unavailable' : 'available', querySelector: () => p.recommendation ? null : {} }), querySelectorAll: () => p.prices.map(price => ({ ...node(price.text || price), children: [], closest: () => price.crossed ? {} : null })) }));
     if (selector.startsWith('script')) return scripts;
     if (selector.startsWith('[aria-checked')) return options.map(size => node(size));
     if (selector.startsWith('meta[property')) return shown.map(price => node('', { content: price }, 'META'));
@@ -20,6 +21,13 @@ const offer = (price, extra = {}) => ({ '@type': 'Offer', price, priceCurrency: 
 test('linked default wins even when a cheaper size appears first', () => {
   const result = lookup([product('Red Bull', [offer('2.99', { url: '/ip/red-bull/8' }), offer('4.29', { url: '/ip/red-bull/16' })])]);
   assert.equal(result.candidates[0].cents, 429);
+});
+test('Meijer falls back to its main purchase-panel price without size options or metadata', () => {
+  const result = lookup([], { url: 'https://www.meijer.com/shopping/product/yeast/3997802546', title: "Bob's Red Mill Nutritional Yeast, 5 oz.", panels: [{ prices: ['$7.79', { text: '$8.99', crossed: true }, '$1.56/oz'] }] });
+  assert.equal(result.candidates[0].cents, 779); assert.match(result.reason, /main product price/);
+});
+test('main-panel fallback rejects recommendations, unavailable items and conflicting prices', () => {
+  for (const panel of [{ prices: ['$2.00'], recommendation: true }, { prices: ['$7.79'], available: false }, { prices: ['$7.79', '$8.79'] }]) assert.equal(lookup([], { ...meijerPage, panels: [panel] }).candidates.length, 0);
 });
 test('primary page product is distinguished from recommendations', () => {
   const result = lookup([product('Other drink', offer('1.99')), product('Red Bull', offer('4.29'))]);
