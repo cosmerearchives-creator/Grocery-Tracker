@@ -1,6 +1,6 @@
 {
   "name": "grocery-tracker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A local-first grocery comparison cart for Marion, Ohio",
   "author": "cosmerearchives-creator",
   "private": true,
@@ -16,6 +16,7 @@
   "dependencies": { "electron-updater": "^6.8.11" },
   "devDependencies": { "electron": "^45.1.0", "electron-builder": "^26.18.0" },
   "build": {
+    "artifactName": "Grocery-Tracker-Setup-${version}.${ext}",
     "appId": "com.cosmerearchives.grocerytracker",
     "productName": "Grocery Tracker",
     "files": ["src/**/*", "package.json"],
