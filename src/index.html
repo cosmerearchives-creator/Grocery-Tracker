@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Grocery Tracker</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<aside><div class="logo">g<span>·</span></div><h2>Grocery<br>Tracker</h2><p class="location">MARION, OHIO</p><div class="nav active">Your cart</div><p class="aside-note">One list.<br>Four stores.<br>A clearer total.</p><div class="aside-bottom"><span id="version"></span><button id="update">Check for updates</button><p id="update-status" role="status">Updates check automatically in the installed app.</p><button id="install" hidden>Save & restart to update</button></div></aside>
+<main><header><div><p class="eyebrow">PLAN YOUR NEXT GROCERY RUN</p><h1>A little planning.<br>A better grocery trip.</h1><p class="subtitle">Compare your cart across your Marion stores.</p></div><div class="export"><label for="export-store">Shopping at</label><select id="export-store"></select><button id="copy" class="primary">Copy shopping list ↗</button><button id="export-file">Save checklist file</button></div></header>
+<div class="notice"><strong>First look · v0.1</strong> Store prices start empty. Add a price or try a signed-in product lookup. Online prices are estimates until you verify the Marion shelf price.</div>
+<section aria-label="Store comparison" id="stores" class="store-grid"></section>
+<section class="cart"><div class="section-heading"><div><p class="eyebrow">YOUR SHOPPING LIST</p><h2>The cart <span id="count"></span></h2></div><span id="save-status" role="status">Saved on this computer</span></div>
+<form id="add-form"><input id="new-name" aria-label="New grocery item" placeholder="Add something to your list…" maxlength="200" required><input id="new-size" aria-label="Size or variety" placeholder="Size or variety" maxlength="200"><select id="new-match" aria-label="Match preference"><option value="equivalent">Any comparable brand</option><option value="exact">Exact brand</option></select><button class="primary">+ Add item</button></form>
+<div id="items"></div><div id="empty" hidden>Your cart is empty. Add an item to start comparing.</div></section>
+<footer>Totals exclude taxes and conditional coupons. A partial cart is never ranked as the cheapest complete cart.<br>Store sign-ins and your cart stay on this computer. Checking a product never places an order.</footer>
+<div id="message" role="status" hidden></div>
+</main>
+<dialog id="price-dialog"><form id="price-form"><div class="dialog-head"><div><p class="eyebrow" id="price-store"></p><h2 id="price-item">Add a price</h2></div><button type="button" id="close-price" aria-label="Close">✕</button></div>
+<label>Product name and package size<input id="offer-product" maxlength="300" required></label>
+<div class="two"><label>Price per package ($)<input id="offer-price" type="number" min="0.01" max="100000" step="0.01" required></label><label>Packages needed per cart quantity<input id="offer-packs" type="number" min="1" max="999" step="1" value="1" required></label></div>
+<label>Price source<select id="offer-source"><option value="manual">Manually entered estimate</option><option value="shelf">Shelf / receipt price I verified</option><option value="web-estimate">Online price estimate</option></select></label>
+<label>Store product link (optional)<input id="offer-url" type="url" placeholder="https://…"></label><div class="lookup-row"><button type="button" id="lookup">Try automatic price lookup</button><span id="lookup-status" role="status"></span></div>
+<p class="help">Sign in and select Marion using the store card first. Lookup opens the product page and reads published product metadata. Check the product, pack size, store and availability before saving. Some sites may not support lookup or embedded sign-in.</p>
+<label class="checkbox"><input id="offer-confirm" type="checkbox" required> I checked that this product, package quantity and price apply to my comparison.</label>
+<div class="dialog-actions"><button type="button" id="delete-offer">Remove this price</button><button class="primary">Save price</button></div></form></dialog>
+<script src="renderer.js"></script></body></html>

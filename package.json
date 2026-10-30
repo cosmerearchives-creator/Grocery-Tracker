@@ -1,0 +1,26 @@
+{
+  "name": "grocery-tracker",
+  "version": "0.1.0",
+  "description": "A local-first grocery comparison cart for Marion, Ohio",
+  "author": "cosmerearchives-creator",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "main": "src/main.cjs",
+  "repository": { "type": "git", "url": "https://github.com/cosmerearchives-creator/Grocery-Tracker.git" },
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "dist": "electron-builder --win nsis --x64",
+    "release": "electron-builder --win nsis --x64 --publish always"
+  },
+  "dependencies": { "electron-updater": "^6.8.11" },
+  "devDependencies": { "electron": "^45.1.0", "electron-builder": "^26.18.0" },
+  "build": {
+    "appId": "com.cosmerearchives.grocerytracker",
+    "productName": "Grocery Tracker",
+    "files": ["src/**/*", "package.json"],
+    "publish": [{ "provider": "github", "owner": "cosmerearchives-creator", "repo": "Grocery-Tracker", "releaseType": "release" }],
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false }
+  }
+}
