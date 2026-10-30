@@ -108,12 +108,18 @@ async function searchStores(query) {
 async function capture(id, url) {
   if (!validStoreUrl(id, url)) throw Error('Use an HTTPS product link on this store’s own website.');
   const wc = storeView(id).webContents;
-  await wc.loadURL(url);
-  // Give dynamic storefronts time to populate product metadata.
-  await new Promise(resolve => setTimeout(resolve, 1800));
-  if (wc.isDestroyed() || !validStoreUrl(id, wc.getURL())) throw Error('Store page is unavailable.');
-  const result = await wc.executeJavaScript(extractScript, false);
-  if (!result || !validStoreUrl(id, result.url)) throw Error('Could not read this product page.');
+  // Keep a signed-in, already-open product page intact rather than reloading
+  // its selection/location. New links still open their default version.
+  if (wc.getURL() !== url) await wc.loadURL(url);
+  let result;
+  const deadline = Date.now() + 12000;
+  do {
+    if (wc.isDestroyed() || !validStoreUrl(id, wc.getURL())) throw Error('Store page is unavailable.');
+    result = await wc.executeJavaScript(extractScript, false);
+    if (!result || !validStoreUrl(id, result.url)) throw Error('Could not read this product page.');
+    if (result.candidates.length || /marked unavailable/.test(result.reason)) break;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  } while (Date.now() < deadline);
   return result;
 }
 async function checkUpdate() {

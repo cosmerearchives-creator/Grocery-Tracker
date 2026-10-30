@@ -18,6 +18,26 @@ function extractProduct() {
   const visible = node => !!node && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
   const heading = [...document.querySelectorAll('h1')].find(visible);
   const title = clean(heading?.textContent || document.title);
+  // Meijer's current product pages expose variant prices as visible text,
+  // while their JSON-LD can contain only ratings and breadcrumbs.
+  // Bind the selected controls to the product ID in this page's URL so other
+  // flavors, package sizes, recommendations and the header cart stay excluded.
+  if (heading && /(^|\.)meijer\.com$/.test(new URL(pageUrl).hostname) && new URL(pageUrl).pathname.startsWith('/shopping/product/')) {
+    const pageId = new URL(pageUrl).pathname.split('/').filter(Boolean).at(-1);
+    const selected = [...document.querySelectorAll('a[aria-current="page"][data-product-id]')].filter(n => visible(n) && n.getAttribute('data-product-id') === pageId);
+    const prices = new Set();
+    for (const option of selected) {
+      for (const node of option.querySelectorAll('span')) {
+        if (node.children.length || !visible(node) || node.closest('del, s, .line-through')) continue;
+        const price = clean(node.textContent).match(/^\$\s*(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/);
+        if (price) { const cents = Number(price[1].replace(/,/g, '')) * 100 + Number(price[2]); if (cents > 0 && cents <= 10000000) prices.add(cents); }
+      }
+    }
+    if (prices.size === 1) {
+      const size = selected.map(n => clean(n.getAttribute('data-option-name'))).find(name => /\b(ounces?|oz|pounds?|lbs?|gallons?|gal|count|ct|fl\s*oz)\b/i.test(name));
+      return { url: pageUrl, candidates: [{ product: [title, size].filter(Boolean).join(' — '), cents: [...prices][0], availability: '' }], reason: 'Using the displayed price for Meijer’s selected product version.' };
+    }
+  }
   const products = [], entities = new Map();
   const visit = (value, depth = 0) => {
     if (!value || typeof value !== 'object' || depth > 14 || products.length >= 80) return;

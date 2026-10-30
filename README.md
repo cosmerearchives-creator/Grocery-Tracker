@@ -8,6 +8,10 @@ Download the **Grocery Tracker Setup** `.exe` from [Releases](https://github.com
 
 ## Version 0.2
 
+### 0.2.1 lookup fix
+
+Meijer pages with prices in visible selected-version controls are now supported even when product-price JSON-LD is absent. The reader matches the selected controls to the page's product ID, excludes other flavors/sizes and struck-through prices, and includes the selected package size. Lookup preserves an already-open identical product URL and retries missing data for up to 12 seconds while the page loads. Verified on the live Kraft Singles 24-slice / 16-ounce page at $4.89; prices remain store-dependent estimates.
+
 - Starter cart: Kraft American Singles, regular Red Bull 16 fl oz, gallon Vitamin D whole milk, and sharp cheddar shredded cheese.
 - Add/remove groceries, adjust quantities and sizes, and choose exact-brand or comparable-brand matching. Matching preferences are recorded for your comparison; automatic cross-store product matching is not implemented yet.
 - Enter each store's package price and number of packages needed per cart quantity. This accounts for different package sizes. Unit-price normalization is planned, not implemented yet.
