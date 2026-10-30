@@ -57,6 +57,9 @@ test('non-USD offers and empty product metadata do not populate a price', () => 
   assert.equal(lookup(product('Red Bull', offer('4.29', { priceCurrency: 'CAD' }))).candidates.length, 0);
   assert.equal(lookup([]).candidates.length, 0);
 });
+test('blocked store pages report access refusal explicitly instead of pretending there is no price', () => {
+  const result = lookup([], { title: 'Access Denied' }); assert.equal(result.accessBlocked, true); assert.equal(result.candidates.length, 0); assert.match(result.reason, /blocked this request/);
+});
 const meijerPage = { url: 'https://www.meijer.com/shopping/product/kraft-singles/2100061526', title: 'Kraft Singles Sliced American Deli Cheese, 24 ct Pack Slices' };
 test('Meijer reads selected visible 16 oz price without product-price metadata', () => {
   const result = lookup([], { ...meijerPage, selected: [

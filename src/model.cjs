@@ -133,7 +133,7 @@ function checklist(cart, store) {
   const total = summarize(cart, store), lines = [];
   for (const item of cart.items.filter(i => i.store === store)) {
     if (!item.available) { lines.push(`NOT AVAILABLE AT THIS STORE: ${item.name}`); continue; }
-    for (const quote of item.priceOptions.filter(o => o.quantity > 0)) lines.push(`☐ ${quote.quantity} × ${quote.product} | ${item.name} | ${quote.packs} package(s) per quantity | ${money(quote.cents * quote.packs * quote.quantity)} (${quote.source})${quote.needsReview ? ' — NEEDS REVIEW' : ''}`);
+    for (const quote of item.priceOptions.filter(o => o.quantity > 0)) lines.push(`☐ ${quote.quantity} × ${quote.product} | ${item.name} | ${quote.packs} package(s) per quantity | ${money(quote.cents * quote.packs * quote.quantity)} (${quote.source})${quote.refreshError ? ' — PRICE NOT REFRESHED' : ''}${quote.needsReview ? ' — NEEDS REVIEW' : ''}`);
     if (!item.offers[store] && item.quantity > 0) lines.push(`☐ ${item.quantity} × ${item.name}${item.size ? ' — ' + item.size : ''} | PRICE MISSING`);
   }
   return [`GROCERY TRACKER — ${s.name}`, 'Marion, Ohio', '', ...lines, '', `${total.complete ? 'Estimated subtotal' : 'Known subtotal (incomplete)'}: ${money(total.cents)}`, `${total.missing} selection(s) without a price. ${total.unavailable} item(s) not available at this store.`, 'Quantity-zero options are saved only and excluded. Taxes and conditional coupons excluded.'].join('\n');
@@ -183,4 +183,33 @@ function applyDetected(cart, itemId, store, result, asAlternative = false) {
   rememberOffer(target, { cents: product.cents, packs: 1, product: product.product, source: 'web-estimate', url: result.url, checked: new Date().toISOString(), needsReview: true }, asAlternative);
   validateCart(cart); return target.id;
 }
-module.exports = { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, summarize, money, checklist, applyChange, applyDetected, searchChoices };
+function applyPriceRefresh(cart, itemId, previous, result, error, checked = new Date().toISOString()) {
+  const item = cart.items.find(i => i.id === itemId);
+  const option = item?.priceOptions.find(o => optionKey(o) === optionKey(previous));
+  if (!option) return 'skipped';
+  if (option.cents !== previous.cents || option.checked !== previous.checked || option.source !== previous.source) return 'skipped';
+  option.lastRefreshAttempt = checked;
+  if (error || result?.candidates?.length !== 1) {
+    option.refreshError = String(error || result?.reason || 'No readable price was found.').slice(0, 300);
+    option.needsReview = true; syncPrimary(item); validateCart(cart); return 'failed';
+  }
+  if (!validStoreUrl(item.store, result.url)) throw Error('Invalid refreshed store link.');
+  const detected = result.candidates[0];
+  validateOffer(item.store, { ...option, cents: detected.cents });
+  const identity = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  if (detected.product && identity(option.product) !== identity(detected.product)) {
+    option.refreshDetectedProduct = String(detected.product).slice(0, 600);
+    option.refreshError = 'This link now describes a different product or version. Review the page before changing its saved price.';
+    option.needsReview = true; syncPrimary(item); validateCart(cart); return 'failed';
+  }
+  if (/OutOfStock|Discontinued|SoldOut/i.test(detected.availability)) {
+    option.refreshError = 'This product is currently marked unavailable on the store page.';
+    option.needsReview = true; syncPrimary(item); validateCart(cart); return 'failed';
+  }
+  const changed = option.cents !== detected.cents;
+  option.cents = detected.cents; option.checked = checked; option.refreshDetectedProduct = String(detected.product || '').slice(0, 600);
+  delete option.refreshError;
+  if (changed || (detected.product && option.product.toLowerCase() !== detected.product.toLowerCase())) option.needsReview = true;
+  syncPrimary(item); validateCart(cart); return changed ? 'changed' : 'unchanged';
+}
+module.exports = { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, summarize, money, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh };

@@ -2,8 +2,9 @@ const { app, BrowserWindow, WebContentsView, ipcMain, dialog, clipboard, Menu } 
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
-const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices } = require('./model.cjs');
+const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh } = require('./model.cjs');
 const { extractScript } = require('./lookup.cjs');
+const { cartView } = require('./cart-view.cjs');
 let main, cart, readyUpdate = false, updateBusy = false;
 let writeQueue = Promise.resolve();
 const storeViews = new Map();
@@ -11,6 +12,9 @@ const closedStores = new Set();
 let storeShell, activeStore = 'meijer';
 let captureTarget = null;
 const tabErrors = new Map();
+const refreshWindows = new Map();
+let refreshCanceled = false;
+let refreshState = { running: false, text: 'Refresh checks saved product links across all store carts.' };
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (main && !main.isDestroyed()) { if (main.isMinimized()) main.restore(); main.focus(); } });
 const cartPath = () => path.join(app.getPath('userData'), 'cart.json');
@@ -171,10 +175,74 @@ async function capture(id, url) {
     if (wc.isDestroyed() || !validStoreUrl(id, wc.getURL())) throw Error('Store page is unavailable.');
     result = await wc.executeJavaScript(extractScript, false);
     if (!result || !validStoreUrl(id, result.url)) throw Error('Could not read this product page.');
-    if (result.candidates.length || /marked unavailable/.test(result.reason)) break;
+    if (result.candidates.length || result.accessBlocked || /marked unavailable/.test(result.reason)) break;
     await new Promise(resolve => setTimeout(resolve, 500));
   } while (Date.now() < deadline);
   return result;
+}
+function sendRefresh() { if (main && !main.isDestroyed()) main.webContents.send('price-refresh-status', refreshState); }
+function refreshWindow(store) {
+  if (refreshWindows.has(store)) return refreshWindows.get(store);
+  const window = new BrowserWindow({ show: false, width: 1200, height: 860, webPreferences: { partition: `persist:store-${store}`, nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, backgroundThrottling: false } });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  for (const event of ['will-navigate', 'will-redirect']) window.webContents.on(event, (e, url) => { if (!validStoreUrl(store, url)) e.preventDefault(); });
+  window.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  window.webContents.session.setPermissionCheckHandler(() => false);
+  refreshWindows.set(store, window); return window;
+}
+async function readRefreshProduct(store, url) {
+  const wc = refreshWindow(store).webContents;
+  let timer;
+  try {
+    await Promise.race([wc.loadURL(url), new Promise((_, reject) => { timer = setTimeout(() => { if (!wc.isDestroyed()) wc.stop(); reject(Error('Product page took too long to load.')); }, 45000); })]);
+  } finally { clearTimeout(timer); }
+  const deadline = Date.now() + 12000;
+  let result;
+  do {
+    if (refreshCanceled) throw Error('Canceled');
+    if (wc.isDestroyed() || !validStoreUrl(store, wc.getURL())) throw Error('Product page is unavailable.');
+    result = await wc.executeJavaScript(extractScript, false);
+    if (!result || !validStoreUrl(store, result.url)) throw Error('Product page is unavailable.');
+    if (result.candidates.length || result.accessBlocked || /marked unavailable/.test(result.reason)) return result;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  } while (Date.now() < deadline);
+  return result;
+}
+function cancelPriceRefresh() {
+  refreshCanceled = true;
+  for (const window of refreshWindows.values()) if (!window.isDestroyed()) window.webContents.stop();
+}
+async function runPriceRefresh() {
+  const jobs = cart.items.filter(i => STORES.some(s => s.id === i.store)).flatMap(item => item.priceOptions.length ? item.priceOptions.map(option => ({ itemId: item.id, store: item.store, option: { ...option } })) : [{ itemId: item.id, store: item.store, option: null }]);
+  const cache = new Map(), blockedStores = new Set(); refreshCanceled = false;
+  refreshState = { running: true, done: 0, total: jobs.length, changed: 0, failed: 0, skipped: 0, unchanged: 0, text: 'Starting price refresh…' }; sendRefresh();
+  try {
+    for (const job of jobs) {
+      if (refreshCanceled) break;
+      if (!job.option?.url) { refreshState.skipped++; refreshState.done++; sendRefresh(); continue; }
+      refreshState.text = `Checking ${refreshState.done + 1} of ${jobs.length}: ${job.option.product}`; sendRefresh();
+      const key = `${job.store}:${job.option.url}`;
+      if (blockedStores.has(job.store)) cache.set(key, { error: 'This store blocked access during refresh. Open its tab to sign in or try again later.' });
+      if (!cache.has(key)) {
+        try {
+          const result = await readRefreshProduct(job.store, job.option.url);
+          if (result.accessBlocked) { blockedStores.add(job.store); cache.set(key, { error: result.reason }); }
+          else cache.set(key, { result });
+        }
+        catch { if (refreshCanceled) break; cache.set(key, { error: 'Could not load or read this product page. Try again or sign in to the store.' }); }
+      }
+      if (refreshCanceled) break;
+      const response = cache.get(key); let outcome;
+      await persist(snapshot => { outcome = applyPriceRefresh(snapshot, job.itemId, job.option, response.result, response.error); });
+      refreshState[outcome]++; refreshState.done++; sendRefresh();
+    }
+  } catch { refreshState.failed++; refreshState.text = 'Price refresh stopped because changes could not be saved. Existing saved prices are retained.'; }
+  finally {
+    for (const window of refreshWindows.values()) if (!window.isDestroyed()) window.destroy();
+    refreshWindows.clear(); refreshState.running = false;
+    if (!refreshState.text.startsWith('Price refresh stopped')) refreshState.text = `${refreshCanceled ? 'Canceled' : 'Finished'}: ${refreshState.done}/${refreshState.total} processed · ${refreshState.changed} prices changed · ${refreshState.unchanged} unchanged · ${refreshState.failed} could not be checked · ${refreshState.skipped} skipped (no link, edited or removed).`;
+    sendRefresh();
+  }
 }
 async function checkUpdate() {
   if (!app.isPackaged) { sendStatus('Updates are available in the installed Windows app.'); return; }
@@ -194,12 +262,18 @@ app.whenReady().then(async () => {
     if (error.code !== 'ENOENT') { loadError = true; await fs.copyFile(cartPath(), cartPath() + '.backup-' + Date.now()).catch(() => {}); }
   }
   main = new BrowserWindow({ width: 1360, height: 930, minWidth: 980, minHeight: 700, backgroundColor: '#f4f5ef', title: 'Grocery Tracker', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
-  main.on('closed', () => { if (storeShell && !storeShell.isDestroyed()) storeShell.close(); });
+  main.on('closed', () => { cancelPriceRefresh(); for (const window of refreshWindows.values()) if (!window.isDestroyed()) window.destroy(); if (storeShell && !storeShell.isDestroyed()) storeShell.close(); });
   Menu.setApplicationMenu(null);
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', event => event.preventDefault());
-  handle('load', () => ({ cart, version: app.getVersion(), loadError }));
+  handle('load', () => ({ cart, version: app.getVersion(), loadError, refreshState }));
+  handle('refresh-prices', () => { if (refreshState.running) return false; runPriceRefresh().catch(() => {}); return true; });
+  handle('cancel-price-refresh', () => { cancelPriceRefresh(); return true; });
   handle('stores', () => STORES.map(({ id, name }) => ({ id, name })));
+  handle('cart-view', (selectedStore, comparisons) => {
+    if (selectedStore !== 'all' && !STORES.some(s => s.id === selectedStore)) throw Error('Choose a store cart or All carts.');
+    return cartView(cart, STORES.map(s => s.id), selectedStore, comparisons);
+  });
   handle('change', change => persist(snapshot => applyChange(snapshot, change)));
   handle('open-store', id => { const wc = storeView(id).webContents; if (!wc.getURL()) wc.loadURL(STORES.find(s => s.id === id).home).catch(() => {}); return true; });
   handle('search-stores', searchStores);

@@ -18,6 +18,7 @@ function extractProduct() {
   const visible = node => !!node && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
   const heading = [...document.querySelectorAll('h1')].find(visible);
   const title = clean(heading?.textContent || document.title);
+  if (/^(access denied|verify you are human|robot or human|security check|sign in required)/i.test(title)) return { url: pageUrl, candidates: [], accessBlocked: true, reason: 'The store blocked this request or requires verification. Open its store tab to sign in, or try again later.' };
   // Meijer's current product pages expose variant prices as visible text,
   // while their JSON-LD can contain only ratings and breadcrumbs.
   // Bind the selected controls to the product ID in this page's URL so other
@@ -108,7 +109,9 @@ function extractProduct() {
   }
   if (heading && /(^|\.)meijer\.com$/.test(new URL(pageUrl).hostname) && new URL(pageUrl).pathname.startsWith('/shopping/product/')) {
     const values = new Set();
-    const panels = [...document.querySelectorAll('[data-cart-eligibility] section[aria-label="Product pricing information"]')].filter(visible);
+    // A recommendation can sit inside a distant purchase-panel ancestor.
+    // Require direct ownership so its price never joins the main panel's price.
+    const panels = [...document.querySelectorAll('[data-cart-eligibility] > section[aria-label="Product pricing information"]')].filter(visible);
     for (const panel of panels) {
       const container = panel.closest('[data-cart-eligibility]');
       if (!container?.querySelector('button[data-testid="quantity-input-add-to-cart"][aria-label="Add to Cart"]')) continue;

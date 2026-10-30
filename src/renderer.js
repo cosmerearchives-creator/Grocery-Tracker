@@ -5,6 +5,8 @@ let notificationTimer;
 let editingSearch;
 const chosenSearches = new Map();
 const expandedAlternatives = new Set();
+let comparisons = localStorage.getItem('cart-comparisons') === 'true';
+let renderGeneration = 0;
 let selectedStore = localStorage.getItem('cart-store') || 'meijer';
 const format = cents => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
 const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
@@ -16,7 +18,16 @@ async function change(command) {
   catch (e) { message(e.message); throw e; }
   finally { pending--; $('save-status').textContent = pending ? 'Saving…' : 'Saved on this computer'; }
 }
-function selectStore(id) { selectedStore = id; localStorage.setItem('cart-store', id); $('new-store').value = id; render(); }
+function selectStore(id) {
+  selectedStore = id; localStorage.setItem('cart-store', id);
+  if (id !== 'all') { comparisons = false; localStorage.setItem('cart-comparisons', 'false'); $('new-store').value = id; $('export-store').value = id; }
+  render();
+}
+function showRefresh(state) {
+  $('refresh-prices').disabled = state.running;
+  $('cancel-refresh').hidden = !state.running;
+  $('refresh-status').textContent = state.text;
+}
 function summary(id) {
   const items = cart.items.filter(i => i.store === id);
   const options = items.filter(i => i.available).flatMap(i => i.priceOptions);
@@ -24,8 +35,12 @@ function summary(id) {
   const missing = items.filter(i => i.available && !i.offers[id] && i.quantity > 0).length;
   return { count: selected.length + missing, matched: selected.length, reviews: options.filter(o => o.needsReview).length, unavailable: items.filter(i => !i.available).length, cents: selected.reduce((n, o) => n + o.quantity * o.packs * o.cents, 0) };
 }
-function render() {
+async function render() {
   if (!cart) return;
+  const generation = ++renderGeneration;
+  let view;
+  try { view = await grocery.cartView(selectedStore, comparisons); } catch (e) { message(e.message); return; }
+  if (generation !== renderGeneration) return;
   $('stores').replaceChildren(); $('cart-tabs').replaceChildren();
   for (const store of stores) {
     const total = summary(store.id);
@@ -35,19 +50,23 @@ function render() {
     $('stores').append(card);
     const tab = button(store.name, () => selectStore(store.id), selectedStore === store.id ? 'primary' : ''); tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(selectedStore === store.id)); $('cart-tabs').append(tab);
   }
-  const items = cart.items.filter(i => i.store === selectedStore);
+  const allTab = button('All carts', () => selectStore('all'), selectedStore === 'all' ? 'primary' : ''); allTab.setAttribute('role', 'tab'); allTab.setAttribute('aria-selected', String(selectedStore === 'all')); $('cart-tabs').append(allTab);
+  const items = view.rows;
+  $('show-comparisons').checked = view.compare; $('show-comparisons').disabled = selectedStore === 'all';
+  $('view-description').textContent = selectedStore === 'all' ? 'Items from every store cart, grouped once with all store options. Comparisons are always on here.' : view.compare ? 'Items from this store’s cart, with other store options shown for comparison.' : 'Only this store’s items and product options are shown.';
   $('count').textContent = items.length;
-  $('cart-title').textContent = (stores.find(s => s.id === selectedStore)?.name || '') + ' cart';
+  $('cart-title').textContent = selectedStore === 'all' ? 'All carts' : (stores.find(s => s.id === selectedStore)?.name || '') + ' cart';
   $('empty').hidden = !!items.length; $('items').replaceChildren();
   for (const item of items) {
     const row = el('article', undefined, 'item'); row.dataset.itemId = item.id;
     const top = el('div', undefined, 'item-top'), detail = el('div', undefined, 'item-detail');
     detail.append(el('h3', item.name));
+    if (selectedStore === 'all') detail.append(el('p', 'In: ' + stores.filter(s => cart.items.some(i => i.originId === item.originId && i.store === s.id)).map(s => s.name).join(' · '), 'source'));
     const prefs = el('div', undefined, 'preferences');
     const size = el('input'); size.value = item.size; size.maxLength = 200; size.placeholder = 'Size / variety'; size.setAttribute('aria-label', `${item.name}: size or variety`);
     const match = el('select'); for (const [value, label] of [['exact', 'Exact brand'], ['equivalent', 'Any comparable brand']]) { const o = el('option', label); o.value = value; match.append(o); } match.value = item.match; match.setAttribute('aria-label', `${item.name}: match preference`);
     const updateDetails = () => change({ type: 'details', id: item.id, size: size.value.trim(), match: match.value }).catch(() => {});
-    size.onchange = updateDetails; match.onchange = updateDetails; prefs.append(size, match); detail.append(prefs);
+    size.onchange = updateDetails; match.onchange = updateDetails; prefs.append(size, match); if (selectedStore !== 'all') detail.append(prefs);
     const searchOptions = el('select'); searchOptions.className = 'search-choice'; searchOptions.setAttribute('aria-label', `${item.name}: search product or UPC`);
     for (const [index, product] of [{ name: item.name, upc: item.upc }, ...(item.alternatives || [])].entries()) {
       const option = el('option', index ? `Alternative: ${product.name}` : `Name: ${product.name}`); option.value = `name-${index}`; searchOptions.append(option);
@@ -55,12 +74,14 @@ function render() {
     }
     searchOptions.value = chosenSearches.get(item.id) || 'name-0'; if (!searchOptions.value) searchOptions.value = 'name-0'; searchOptions.onchange = () => chosenSearches.set(item.id, searchOptions.value);
     const search = button('Search all 3 stores ↗', () => grocery.searchStores('', item.id, searchOptions.value), 'search-stores');
-    top.append(detail, search, button('Remove', () => change({ type: 'remove', id: item.id }), 'remove')); row.append(top);
+    top.append(detail, search);
+    if (selectedStore !== 'all') top.append(button('Remove', () => change({ type: 'remove', id: item.id }), 'remove'));
+    row.append(top);
     const searchRow = el('div', undefined, 'search-options'); searchRow.append(searchOptions, button('Alternatives & UPC', () => openSearchDetails(item)));
     if (item.alternatives?.length) searchRow.append(el('span', `${item.alternatives.length} acceptable alternative(s)`, 'source'));
     row.append(searchRow);
-    const options = el('div', undefined, 'offer-grid');
-    for (const store of stores) {
+    const options = el('div', undefined, 'offer-grid' + (view.compare ? '' : ' single-store'));
+    for (const store of stores.filter(s => view.storeIds.includes(s.id))) {
       const related = cart.items.find(i => i.originId === item.originId && i.store === store.id);
       const block = el('div', undefined, 'store-option'); block.dataset.store = store.id;
       const unavailable = related?.available === false;
@@ -86,6 +107,7 @@ function render() {
       }
       const selectedTotal = unavailable ? 0 : (related?.priceOptions || []).reduce((n, o) => n + o.cents * o.packs * o.quantity, 0);
       block.append(el('p', `Selected here: ${format(selectedTotal)}`, 'selection-total'), button('Search this store ↗', () => grocery.searchStore(store.id, item.id, searchOptions.value), 'search-this-store'), button(unavailable ? 'Clear not available' : 'Not available at this store', () => change({ type: 'availability', id: item.id, store: store.id, available: unavailable }), 'availability-toggle'));
+      if (selectedStore === 'all' && related) block.append(button('Remove from this cart', () => change({ type: 'remove', id: related.id }), 'remove'));
       options.append(block);
     }
     row.append(options); $('items').append(row);
@@ -111,6 +133,9 @@ function productCard(item, quote, index, store) {
   const heading = el('div', undefined, 'product-option-heading'); heading.append(el('span', quote.isAlternative ? 'Alternative' : 'Main option', 'offer-store'), quantityControls(item, item, index, store));
   card.append(heading, button(quote.product, () => openPrice(item, store.id, index), 'product-name'), el('strong', format(quote.cents) + ' / package', 'option-price'), el('span', `${quote.packs} package(s) per quantity · ${!item.available ? 'Excluded while marked not available' : quote.quantity > 0 ? format(quote.cents * quote.packs * quote.quantity) + ' selected' : 'Saved only · quantity 0'}`, 'source'));
   card.append(el('span', `${quote.source === 'shelf' ? 'Shelf / receipt verified' : quote.source === 'web-estimate' ? 'Online estimate' : 'Manual estimate'} · ${new Date(quote.checked).toLocaleDateString()}`, 'source'));
+  if (quote.lastRefreshAttempt) card.append(el('span', `${quote.refreshError ? 'Last attempt' : 'Price checked'}: ${new Date(quote.lastRefreshAttempt).toLocaleString()}`, 'source'));
+  if (quote.refreshError) card.append(el('span', `Couldn’t refresh: ${quote.refreshError}`, 'refresh-error'));
+  if (quote.refreshDetectedProduct && quote.refreshDetectedProduct !== quote.product) card.append(el('span', `Page describes: ${quote.refreshDetectedProduct}`, 'source'));
   const main = item.priceOptions.find(o => !o.isAlternative);
   if (quote.isAlternative && main && main.cents !== quote.cents) card.append(el('span', `${format(Math.abs(main.cents - quote.cents))} ${quote.cents < main.cents ? 'less' : 'more'} per listed package than the main option`, 'source'));
   if (quote.needsReview) card.append(el('span', 'Needs review', 'review-badge'), button('Mark reviewed', () => change({ type: 'review', id: item.id, index }), 'mark-reviewed'));
@@ -149,7 +174,11 @@ $('add-form').onsubmit = async event => {
   event.preventDefault(); const name = $('new-name').value.trim(); if (!name) return;
   try { await change({ type: 'add', name, size: $('new-size').value, store: $('new-store').value, match: $('new-match').value, upc: $('new-upc').value.trim(), alternatives: parseAlternatives($('new-alternatives').value) }); $('new-name').value = ''; $('new-size').value = ''; $('new-upc').value = ''; $('new-alternatives').value = ''; $('new-name').focus(); } catch {}
 };
-$('new-store').onchange = event => selectStore(event.target.value);
+$('new-store').onchange = event => { if (selectedStore !== 'all') selectStore(event.target.value); };
+$('show-comparisons').onchange = event => { comparisons = event.target.checked; localStorage.setItem('cart-comparisons', String(comparisons)); render(); };
+$('refresh-prices').onclick = () => grocery.refreshPrices().catch(e => message(e.message));
+$('cancel-refresh').onclick = () => grocery.cancelPriceRefresh().catch(e => message(e.message));
+grocery.onPriceRefresh(showRefresh);
 $('close-price').onclick = () => $('price-dialog').close();
 $('delete-offer').onclick = async () => { try { await change({ type: 'remove-offer', id: editing.id, index: editing.index }); $('price-dialog').close(); } catch {} };
 $('price-form').onsubmit = async event => {
@@ -175,8 +204,10 @@ grocery.onUpdate(status => { $('update-status').textContent = status.text; $('in
 grocery.onCartChanged(value => { cart = value; render(); });
 window.addEventListener('beforeunload', event => { if (pending) { event.preventDefault(); event.returnValue = ''; } });
 Promise.all([grocery.load(), grocery.stores()]).then(([data, list]) => {
-  cart = data.cart; stores = list; if (!stores.some(s => s.id === selectedStore)) selectedStore = 'meijer'; $('version').textContent = 'VERSION ' + data.version;
+  cart = data.cart; stores = list; if (selectedStore !== 'all' && !stores.some(s => s.id === selectedStore)) selectedStore = 'meijer'; $('version').textContent = 'VERSION ' + data.version;
   for (const store of stores) for (const id of ['new-store', 'export-store']) { const option = el('option', store.name); option.value = store.id; $(id).append(option); }
-  $('new-store').value = selectedStore; render();
+  $('new-store').value = selectedStore === 'all' ? stores[0].id : selectedStore;
+  $('export-store').value = $('new-store').value; render();
+  showRefresh(data.refreshState);
   if (data.loadError) message('Your previous cart could not be read. A backup was preserved locally.');
 }).catch(e => message('Could not load your cart: ' + e.message));

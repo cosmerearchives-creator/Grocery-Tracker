@@ -6,7 +6,14 @@ A Windows grocery planner for Meijer, ALDI, and Gordon Food Service in Marion, O
 
 Download the `.exe` from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). This preview is unsigned, so Windows may display an unknown-publisher message.
 
-## Version 0.5.0
+## Version 0.6.0
+
+- **Store-only cart views.** Clicking a store tab or View cart shows only that store's rows and product options. Show comparisons toggles the side-by-side panels for those same rows. Clicking another specific store returns to store-only mode.
+- **All carts.** The button beside the store tabs shows every active store's items with comparisons automatically enabled. Linked rows are grouped once; unrelated items with the same name remain separate. Store membership is labeled. Removing a row from this view names the store being affected. Totals, quantities and exports remain owned by their respective stores.
+- **Refresh all prices.** Rechecks saved product URLs across all active carts, including main products, selected alternatives and quantity-zero alternatives. It uses the existing store sessions and separate background readers, preserving the pages open in the store window. Progress, cancellation and a completion summary are included. Items without saved links are reported as skipped.
+- **Refresh safeguards.** Quantities and product roles remain unchanged. Changed prices are flagged Needs review. Failed checks retain the previous price, show a per-product error and retain the last successful check time. Links showing a different named product/version are flagged for review rather than silently changing its price. Products edited or removed during the run are skipped. Inactive Walmart rows are never requested. A blocked store stops receiving further requests for that run; other stores continue. No store access restrictions are bypassed.
+
+### Existing cart features
 
 - **Individual quantities.** Every main product and saved alternative has its own minus/quantity/plus control at each store. Main and alternative products can both have positive quantities, as can the same product at multiple stores. Quantity zero keeps an option saved without adding it to the shopping list or total. The universal row-level quantity control is removed.
 - **Save as alternative.** The store toolbar has a separate button beside Use this price. It saves the detected product under that item/store at quantity zero, without replacing the main product or changing its quantity. The store tab stays open so you can continue browsing. Use this price saves a main selection and closes only that store tab.
@@ -14,7 +21,7 @@ Download the `.exe` from [the latest release](https://github.com/cosmerearchives
 - **Not available at this store.** Each store card can be explicitly marked unavailable. Its selections are excluded from that store's total and export checklist, while an unavailable diagnostic is exported. Clearing the status restores its previously saved quantities. Missing prices and unavailable items remain distinct.
 - **ALDI search correction.** Names, UPCs and alternative searches now use `/store/aldi/s?k=...`, preserving the query rather than redirecting with an empty `k`.
 
-- **Every remaining store option is visible on each item.** Linked prices from Meijer, ALDI and Gordon Food Service appear side by side. Each store retains its own cart and quantities. Empty options do not add items to another store until a price is saved there.
+- **Comparisons on demand.** Linked prices from Meijer, ALDI and Gordon Food Service appear side by side when Show comparisons is enabled or All carts is selected. Each store retains its own cart and quantities.
 - **UPC search.** Add an optional 8, 12, 13 or 14 digit barcode, keeping leading zeros. Select the UPC from the item's search menu to search all three stores, or just one store. Retailers may vary in barcode search support; a UPC search does not guarantee an exact match.
 - **Acceptable alternatives.** Add alternative product names and optional UPCs when creating an item, or use Alternatives & UPC on an existing item. Enter one alternative per line, optionally followed by `| UPC`. Choose which name or UPC to search from the item's menu.
 - **Saved product options.** Each saved product retains its own price, quantity and review state. Use this price makes a main option; Save as alternative collects an unselected option. Products with positive quantities all count in totals and exports. Removing one price preserves other saved options.
@@ -44,6 +51,8 @@ The app automatically upgrades old shared or independent-store lists. Previously
 
 Online prices are estimates, not guaranteed Marion shelf prices. No invented prices are supplied. Unpriced items stay out of known subtotals and are marked missing. Prices exclude taxes and conditional coupons. Automatic cross-store product matching, unit-price normalization, scheduled price refresh, and loyalty-coupon calculation are not implemented. Exact/equivalent matching preferences are stored as guidance for selecting products.
 
+Refresh is a manual batch check, not a guarantee that every website can be read. Retailers may require sign-in or reject background requests. Open the store tab to sign in, or try later; unreadable prices stay saved and flagged. Manually named products whose names do not match the linked product/version need review before an automatic price replacement. Exported selected products with failed checks are labeled PRICE NOT REFRESHED.
+
 ## Privacy
 
 Cart files, backups, and retailer sessions stay in the local app-data folder. They are not included in the repository or installers. No analytics, app account or cloud cart sync is included. The reader examines public product metadata and product-page markup; it does not read passwords, forms, cookies or page storage. Signing into a retailer shares information with that retailer as usual.
@@ -65,6 +74,8 @@ Change the version in package.json, commit, and push a matching version tag. The
 ## Validation
 
 Unit tests cover migration, independent product quantities and totals, store isolation, exports, unavailable status, review state, variant selection, Meijer fallback safeguards, and the ALDI name/UPC route. Windows UI checks cover Save as alternative, expansion/collapse, simultaneous main/alternative and multi-store quantities, quantity-zero export exclusion, unavailable/clear behavior, tab-only closure, restart persistence, and upgrading an actual v0.4 cart with an untouched backup.
+
+The v0.6 checks also cover store-only versus comparison views, deduplicated All carts, refresh changes/failures/skips, cancellation, edits during refresh, preservation of existing store pages, blocked-store request suppression, and continued checks at other stores. A live Kraft page was successfully refreshed; a subsequent Meijer request was denied by the retailer and safely retained/flagged. The app reports that restriction rather than trying to bypass it.
 
 ## Far future
 
