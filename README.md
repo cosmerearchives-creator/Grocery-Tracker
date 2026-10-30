@@ -22,7 +22,7 @@ Download the **Grocery Tracker Setup** `.exe` from [Releases](https://github.com
 
 There are **no prefilled or invented local prices**. A fetched website price is an online estimate, not proof of a Marion shelf price. Product search, scheduled price refresh, automatic equivalents, loyalty coupons, and guaranteed access to every store are not implemented. If a lookup finds no single available offer, enter the price manually. Store locations and package sizes must be checked on the actual store page. Changing an item's size or matching preference clears previous offers to avoid stale comparisons.
 
-The first published release supplies the update feed. Development runs do not update themselves. Publishing code alone does not release an update. Release filenames use explicit hyphens so GitHub upload names match the updater metadata. The packaged app and update-feed check have been tested; complete old-to-new installation is tracked separately.
+The first published release supplies the update feed. Development runs do not update themselves. Publishing code alone does not release an update. Release filenames use explicit hyphens so GitHub upload names match the updater metadata. Verification: packaged v0.1.0 successfully discovered and downloaded the published v0.1.1 installer and displayed the restart action. The final restart/install step has not yet been tested end to end.
 
 ## Privacy
 
