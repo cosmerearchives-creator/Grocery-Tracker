@@ -13,7 +13,7 @@ function render(state) {
   document.getElementById('address').textContent = current?.url || 'Select a store';
   document.getElementById('back').disabled = !current?.canGoBack;
   const target = document.getElementById('target');
-  target.replaceChildren(new Option('Choose cart item…', ''));
+  target.replaceChildren(new Option('Choose list entry…', ''));
   for (const item of state.items) target.append(new Option(item.name, item.id));
   target.value = state.target || '';
   document.getElementById('use-product').disabled = detecting || importing || !state.target || !current;
@@ -42,7 +42,7 @@ document.getElementById('add-new').onclick = async () => {
   detecting = true; document.getElementById('add-new').disabled = true;
   document.getElementById('status').textContent = 'Reading product details…';
   let failure;
-  try { const result = await storeTabs.addNew(); document.getElementById('status').textContent = result.message; } catch (error) { failure = error; showError(error); }
+  try { const preview = await storeTabs.previewNew(); await storeTabs.reviewNew(preview.token); document.getElementById('status').textContent = 'Review the general list name in the main window.'; } catch (error) { failure = error; showError(error); }
   finally { detecting = false; try { render(await storeTabs.state()); if (failure) showError(failure); } catch (error) { showError(error); } }
 };
 

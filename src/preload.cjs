@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('grocery', {
-  importProduct: (url, category) => ipcRenderer.invoke('import-product', url, category),
+  previewProduct: url => ipcRenderer.invoke('preview-product', url),
+  onReviewProduct: callback => ipcRenderer.on('review-product', (_event, preview) => callback(preview)),
+  importProduct: (url, category, options) => ipcRenderer.invoke('import-product', url, category, options),
   cancelImport: () => ipcRenderer.invoke('cancel-import'),
   onImport: callback => ipcRenderer.on('import-status', (_event, state) => callback(state)),
   listFile: (action, name) => ipcRenderer.invoke('list-file', action, name),

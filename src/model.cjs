@@ -1,3 +1,4 @@
+const { upgradeListEntries } = require('./list-entry.cjs');
 const { randomUUID } = require('node:crypto');
 const STORES = [
   { id: 'meijer', name: 'Meijer', home: 'https://www.meijer.com/', hosts: ['meijer.com'] },
@@ -28,7 +29,7 @@ function syncPrimary(item) {
   if (main) item.quantity = main.quantity;
 }
 function migrateCart(value) {
-  if (value?.schema === 3) return validateCart(value);
+  if (value?.schema === 3) return validateCart(upgradeListEntries(structuredClone(value)));
   if (![1, 2].includes(value?.schema) || !Array.isArray(value.items)) throw Error('Invalid cart file.');
   const old = JSON.parse(JSON.stringify(value));
   if (old.schema === 1) {
@@ -46,7 +47,7 @@ function migrateCart(value) {
     item.priceOptions = options.map(o => ({ ...o, ...(main && optionKey(o) === optionKey(main) ? main : {}), quantity: main && optionKey(o) === optionKey(main) ? item.quantity : 0, isAlternative: !main || optionKey(o) !== optionKey(main) }));
     item.available = true; syncPrimary(item);
   }
-  old.schema = 3; return validateCart(old);
+  old.schema = 3; return validateCart(upgradeListEntries(old));
 }
 function validThumbnail(value) {
   try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && value.length <= 4000; } catch { return false; }
@@ -58,8 +59,8 @@ function validateOffer(store, offer) {
   if (offer.url && !validStoreUrl(store, offer.url)) throw Error('Invalid store product link.');
 }
 function validateSearchDetails(item) {
-  const validCode = code => typeof code === 'string' && /^(?:\d{8}|\d{12,14})$/.test(code);
-  if (item.upc && !validCode(item.upc)) throw Error('Use an 8, 12, 13 or 14 digit barcode, including leading zeros.');
+  const validCode = code => typeof code === 'string' && /^\d{8,14}$/.test(code);
+  if (item.upc && !validCode(item.upc)) throw Error('Use an 8–14 digit UPC or retailer code, including leading zeros.');
   if (item.alternatives !== undefined) {
     if (!Array.isArray(item.alternatives) || item.alternatives.length > 20) throw Error('Use up to 20 alternatives per item.');
     for (const a of item.alternatives) if (!a || typeof a.name !== 'string' || !a.name.trim() || a.name.length > 200 || (a.upc && !validCode(a.upc))) throw Error('Each alternative needs a name and an optional 8, 12, 13 or 14 digit barcode.');
@@ -71,6 +72,8 @@ function validateCart(cart) {
   const seen = new Set();
   for (const item of cart.items) {
     if (!item || typeof item.id !== 'string' || seen.has(item.id) || typeof item.originId !== 'string' || !KNOWN_STORES.some(s => s.id === item.store) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || !Number.isInteger(item.quantity) || item.quantity < 0 || item.quantity > 999 || !['exact', 'equivalent'].includes(item.match) || typeof item.available !== 'boolean') throw Error('Invalid cart item.');
+    if (item.requiredAmount !== undefined && (typeof item.requiredAmount !== 'string' || item.requiredAmount.length > 200)) throw Error('Use a Needed amount of up to 200 characters.');
+    if (item.verifiedGtin && !/^(?:\d{8}|\d{12,14})$/.test(item.verifiedGtin)) throw Error('Invalid verified barcode.');
     if (item.category !== undefined && (typeof item.category !== 'string' || item.category.length > 60 || /[\r\n]/.test(item.category))) throw Error('Use a category of up to 60 characters.');
     if (item.pendingUrl && !validStoreUrl(item.store, item.pendingUrl)) throw Error('Invalid pending store link.');
     for (const field of ['importNote', 'barcodeNote', 'retailerUpc']) if (item[field] !== undefined && (typeof item[field] !== 'string' || item[field].length > 500)) throw Error('Invalid imported product detail.');
@@ -122,7 +125,7 @@ function rememberOffer(item, offer, asAlternative = false) {
 function ensureStoreItem(cart, source, store) {
   if (!STORES.some(s => s.id === store)) throw Error('Choose an active store.');
   let target = source.store === store ? source : cart.items.find(i => i.store === store && i.originId === source.originId);
-  if (!target) { target = { ...source, id: randomUUID(), store, quantity: 0, offers: {}, priceOptions: [], available: true }; cart.items.push(target); }
+  if (!target) { target = structuredClone({ ...source, id: randomUUID(), store, quantity: 0, offers: {}, priceOptions: [], available: true }); delete target.pendingUrl; delete target.importNote; cart.items.push(target); }
   return target;
 }
 function summarize(cart, store) {
@@ -156,7 +159,7 @@ function applyChange(cart, change) {
   if (change.type === 'list-name') {
     cart.listName = String(change.name || '').trim();
   } else if (change.type === 'empty-carts') {
-    cart.items = cart.items.filter(i => !STORES.some(s => s.id === i.store));
+    for (const row of cart.items.filter(i => STORES.some(s => s.id === i.store))) { row.quantity = 0; for (const option of row.priceOptions) option.quantity = 0; syncPrimary(row); }
   } else if (change.type === 'add-all') {
     const originId = randomUUID();
     for (const store of STORES) cart.items.push({ id: randomUUID(), originId, store: store.id, name: String(change.name || '').trim(), category: String(change.category || '').trim(), brand: '', size: String(change.size || '').trim(), upc: change.upc || '', alternatives: structuredClone(change.alternatives || []), match: change.match || 'equivalent', quantity: 0, offers: {}, priceOptions: [], available: true });
@@ -165,7 +168,13 @@ function applyChange(cart, change) {
     cart.items.push({ id, originId: id, store: change.store, name: String(change.name || '').trim(), category: String(change.category || '').trim(), brand: '', size: String(change.size || '').trim(), upc: change.upc || '', alternatives: change.alternatives || [], match: change.match || 'equivalent', quantity: 0, offers: {}, priceOptions: [], available: true });
   } else {
     if (!item) throw Error('This item is no longer in your cart.');
-    if (change.type === 'remove') cart.items = cart.items.filter(i => i.id !== item.id);
+    if (change.type === 'delete-entry') cart.items = cart.items.filter(i => i.originId !== item.originId);
+    else if (change.type === 'list-entry') {
+      for (const row of cart.items.filter(i => i.originId === item.originId)) {
+        if (change.name !== undefined) { row.name = String(change.name).trim(); row.listEntryNamed = true; }
+        if (change.requiredAmount !== undefined) row.requiredAmount = String(change.requiredAmount).trim();
+      }
+    } else if (change.type === 'remove') cart.items = cart.items.filter(i => i.id !== item.id);
     else if (change.type === 'category') {
       const category = String(change.category || '').trim();
       for (const related of cart.items.filter(i => i.originId === item.originId)) related.category = category;

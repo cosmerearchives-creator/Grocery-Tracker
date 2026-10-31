@@ -5,6 +5,7 @@ let notificationTimer;
 let listOperation = false;
 let refreshRunning = false;
 let importRunning = false;
+let importPreview, editingEntry;
 let groupCategories = localStorage.getItem('group-categories') !== 'false';
 const defaultCategories = ['Fruit', 'Vegetables', 'Dairy', 'Meat', 'Seafood', 'Bakery', 'Frozen', 'Pantry', 'Drinks', 'Household', 'Other'];
 const expandedAlternatives = new Set();
@@ -79,12 +80,14 @@ async function render() {
     if (groupCategories && categoryName(item) !== lastCategory) { lastCategory = categoryName(item); $('items').append(el('h3', lastCategory, 'category-heading')); }
     const row = el('article', undefined, 'item'); row.dataset.itemId = item.id;
     const top = el('div', undefined, 'item-top');
-    top.append(el('h3', item.name));
+    const title = el('h3'); title.append(button(item.name, () => { editingEntry = item.id; $('entry-name').value = item.name; $('entry-needed').value = item.requiredAmount || ''; $('entry-dialog').showModal(); }, 'entry-name')); title.firstChild.setAttribute('aria-label', `Edit list entry: ${item.name}`); top.append(title);
     const category = el('input'); category.value = item.category || ''; category.maxLength = 60; category.placeholder = 'Uncategorized'; category.setAttribute('list', 'category-choices'); category.setAttribute('aria-label', `${item.name}: category`); category.className = 'item-category';
     category.onchange = () => change({ type: 'category', id: item.id, category: category.value }).catch(() => {});
     const label = el('label', 'Category', 'category-label'); label.append(category);
     const search = button('Search all 3 stores ↗', () => grocery.searchStores('', item.id, item.upc ? 'upc-0' : 'name-0'), 'search-stores');
-    top.append(label, search); row.append(top);
+    const remove = button('Delete', () => change({ type: 'delete-entry', id: item.id }), 'delete-entry'); remove.setAttribute('aria-label', `Delete list entry: ${item.name}`);
+    top.append(label, search, remove); row.append(top);
+    const needed = el('label', 'Needed', 'needed-label'), amount = el('input'); amount.value = item.requiredAmount || ''; amount.maxLength = 200; amount.placeholder = 'e.g. 1 pound or 3 boxes'; amount.setAttribute('aria-label', `${item.name}: needed`); amount.onchange = () => change({ type: 'list-entry', id: item.id, requiredAmount: amount.value }).catch(() => {}); needed.append(amount); row.append(needed);
     if (item.upc || item.retailerUpc) { const code = el('p', 'UPC: ' + (item.upc || item.retailerUpc), 'barcode-details'); code.title = item.barcodeNote || ''; row.append(code); }
     const options = el('div', undefined, 'offer-grid' + (view.compare ? '' : ' single-store'));
     for (const store of stores.filter(s => view.storeIds.includes(s.id))) {
@@ -92,13 +95,15 @@ async function render() {
       const block = el('div', undefined, 'store-option'); block.dataset.store = store.id;
       const unavailable = related?.available === false;
       block.append(el('div', store.name, 'store-option-title'));
-      if (related?.importNote && !related.priceOptions.length) block.append(el('div', related.importNote, 'import-note'));
+      const root = cart.items.find(i => i.originId === item.originId);
+      const note = related?.importNote || (!related?.priceOptions.length ? root?.lookupNotes?.[store.id] : '');
+      if (note && !related?.priceOptions.length) block.append(el('div', note, 'import-note'));
       if (unavailable) block.append(el('span', 'Not available at this store', 'unavailable-badge'));
       const primaryIndex = related?.priceOptions.findIndex(o => !o.isAlternative) ?? -1;
       if (primaryIndex >= 0) block.append(productCard(related, related.priceOptions[primaryIndex], primaryIndex, store));
       else if (!related?.priceOptions.some(o => o.purchaseKind)) {
         const empty = el('div', undefined, 'empty-option');
-        empty.append(button('+ Add / look up price', () => openPrice(related || item, store.id)), el('span', unavailable ? 'Excluded from this store’s total' : 'No main product price saved', 'source'), quantityControls(item, related, undefined, store));
+        empty.append(button('+ Add / look up price', () => openPrice(related || item, store.id)), el('span', unavailable ? 'Excluded from this store’s total' : 'No product option saved at this store', 'source'));
         block.append(empty);
       }
       for (const [index, quote] of (related?.priceOptions || []).entries()) if (quote.purchaseKind && index !== primaryIndex) block.append(productCard(related, quote, index, store));
@@ -182,7 +187,7 @@ async function listFile(action, name) {
   $('refresh-prices').disabled = true; $('refresh-thumbnails').disabled = true; $('empty-carts').disabled = true;
   try {
     const result = await grocery.listFile(action, name);
-    if (result.replaced) { editing = null; expandedAlternatives.clear(); $('price-dialog').close(); $('thumbnail-dialog').close(); $('import-form').reset(); $('browse-form').reset(); }
+    if (result.replaced) { editing = null; expandedAlternatives.clear(); $('price-dialog').close(); $('thumbnail-dialog').close(); $('import-form').reset(); $('browse-form').reset(); $('entry-dialog').close(); }
     if (result.message) { $('list-status').textContent = result.message + (result.file ? ' ' + result.file : result.backup ? ' Backup: ' + result.backup : ''); message(result.message); }
   } catch (e) { message(e.message); }
   finally { listOperation = false; listButtons(); $('refresh-prices').disabled = refreshRunning; $('refresh-thumbnails').disabled = refreshRunning; $('empty-carts').disabled = refreshRunning; }
@@ -193,12 +198,34 @@ function showImport(state) {
   $('cancel-import').hidden = !importRunning;
   for (const id of ['add-link', 'search-items', 'refresh-prices', 'refresh-thumbnails', 'empty-carts']) $(id).disabled = importRunning || refreshRunning || listOperation;
 }
-$('add-link').onclick = () => { $('import-url').value = ''; $('import-category').value = ''; $('import-dialog').showModal(); };
-$('cancel-link').onclick = () => $('import-dialog').close();
+function openImport(preview) {
+  importPreview = preview || null;
+  $('import-url').value = preview?.url || ''; $('import-category').value = '';
+  $('import-review').hidden = !preview;
+  $('import-name').required = !!preview;
+  $('import-name').value = preview?.name || ''; $('import-needed').value = preview?.requiredAmount || '';
+  $('import-product-title').textContent = preview ? 'Product found: ' + preview.productName + (preview.upc ? ' · UPC: ' + preview.upc : '') : '';
+  $('confirm-link').textContent = preview ? 'Add to List' : 'Read product details'; $('import-read-status').textContent = '';
+  if (!$('import-dialog').open) $('import-dialog').showModal();
+}
+$('add-link').onclick = () => openImport();
+$('import-url').oninput = () => { importPreview = null; $('import-review').hidden = true; $('import-name').required = false; $('confirm-link').textContent = 'Read product details'; };
+$('cancel-link').onclick = () => { if (importRunning) grocery.cancelImport().catch(() => {}); $('import-dialog').close(); };
 $('import-form').onsubmit = async event => {
-  event.preventDefault(); const url = $('import-url').value.trim(), category = $('import-category').value.trim(); $('import-dialog').close();
-  try { const result = await grocery.importProduct(url, category); message(result.message); } catch (e) { message(e.message); }
+  event.preventDefault(); const url = $('import-url').value.trim();
+  if (!importPreview) {
+    $('confirm-link').disabled = true; $('import-read-status').textContent = 'Reading product details…';
+    try { const category = $('import-category').value; const preview = await grocery.previewProduct(url); if ($('import-dialog').open && $('import-url').value.trim() === url) { openImport(preview); $('import-category').value = category; } }
+    catch (e) { $('import-read-status').textContent = e.message; }
+    finally { $('confirm-link').disabled = false; }
+    return;
+  }
+  const options = { token: importPreview.token, name: $('import-name').value.trim(), requiredAmount: $('import-needed').value.trim() }, category = $('import-category').value.trim(); $('import-dialog').close(); importPreview = null;
+  try { const result = await grocery.importProduct(url, category, options); message(result.message); } catch (e) { message(e.message); }
 };
+grocery.onReviewProduct(openImport);
+$('cancel-entry').onclick = () => $('entry-dialog').close();
+$('entry-form').onsubmit = async event => { event.preventDefault(); try { await change({ type: 'list-entry', id: editingEntry, name: $('entry-name').value, requiredAmount: $('entry-needed').value }); $('entry-dialog').close(); } catch {} };
 $('cancel-import').onclick = () => grocery.cancelImport().catch(e => message(e.message));
 $('search-items').onclick = () => { $('browse-query').value = ''; $('browse-dialog').showModal(); };
 $('cancel-browse').onclick = () => $('browse-dialog').close();

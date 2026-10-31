@@ -3,7 +3,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
 const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh } = require('./model.cjs');
-const { sourceStore, createImported, applyImportedMatch } = require('./import-product.cjs');
+const { randomUUID } = require('node:crypto');
+const { sourceStore, createImported, applyImportedMatch, suggestEntry } = require('./import-product.cjs');
 const { normalizeGtin } = require('./barcode.cjs');
 const { extractScript, searchLinksScript } = require('./lookup.cjs');
 const { readList, writeList } = require('./list-files.cjs');
@@ -18,6 +19,7 @@ let listBusy = false, listFile;
 let importBusy = false, importCanceled = false;
 let importState = { running: false, text: '' };
 const importWindows = new Map();
+const productPreviews = new Map();
 const tabErrors = new Map();
 const refreshWindows = new Map();
 let refreshCanceled = false;
@@ -45,7 +47,9 @@ async function persist(value) {
   return true;
 }
 function tabState() {
-  return { importState, active: activeStore, target: captureTarget, items: cart?.items.filter(i => STORES.some(s => s.id === i.store)).map(i => ({ id: i.id, name: `${i.name} · ${STORES.find(s => s.id === i.store).name}` })) || [], stores: STORES.filter(s => !closedStores.has(s.id)).map(s => {
+  const entries = new Map();
+  for (const item of cart?.items || []) if (STORES.some(s => s.id === item.store) && !entries.has(item.originId)) entries.set(item.originId, item);
+  return { importState, active: activeStore, target: captureTarget, items: [...entries.values()].map(i => ({ id: i.id, name: i.name })), stores: STORES.filter(s => !closedStores.has(s.id)).map(s => {
     const wc = storeViews.get(s.id)?.webContents;
     return { id: s.id, name: s.name, url: wc && !wc.isDestroyed() ? wc.getURL() : '', loading: wc && !wc.isDestroyed() ? wc.isLoading() : false, canGoBack: wc && !wc.isDestroyed() ? wc.navigationHistory.canGoBack() : false, error: tabErrors.get(s.id) || '' };
   }) };
@@ -112,7 +116,8 @@ ipcMain.handle('store-tab-navigate', (event, action) => {
 function setCaptureTarget(id) {
   if (id === null || id === '') { captureTarget = null; updateTabs(); return true; }
   if (!cart.items.some(i => i.id === id)) throw Error('Choose an item from your cart.');
-  captureTarget = id; updateTabs(); return true;
+  const item = cart.items.find(i => i.id === id);
+  captureTarget = cart.items.find(i => i.originId === item.originId && STORES.some(s => s.id === i.store))?.id || item.id; updateTabs(); return true;
 }
 ipcMain.handle('store-tab-target', (event, id) => { trustedTabs(event); return setCaptureTarget(id); });
 function closeStoreTab(id, originalView) {
@@ -145,10 +150,21 @@ ipcMain.handle('store-tab-use-product', async (event, mode = 'main') => {
   if (!asAlternative) closeStoreTab(store, originalView);
   return { cents: product.cents, product: product.product, asAlternative, prices: result.candidates.map(p => ({ cents: p.cents, unit: p.purchaseUnit || 'package' })) };
 });
-ipcMain.handle('store-tab-add-new', async event => {
+ipcMain.handle('store-tab-preview-new', async event => {
+  trustedTabs(event); const wc = storeViews.get(activeStore)?.webContents; return previewProduct(wc?.getURL(), wc);
+});
+ipcMain.handle('store-tab-review-new', (event, token) => {
+  trustedTabs(event);
+  const preview = productPreviews.get(token);
+  if (!preview || preview.expires < Date.now() || listBusy) throw Error('Read the product details again.');
+  const store = sourceStore(preview.url);
+  main.webContents.send('review-product', { token, url: preview.url, ...suggestEntry(preview.url, store, preview.result), upc: preview.result.details?.upc || '' });
+  if (main.isMinimized()) main.restore(); main.show(); main.focus(); return true;
+});
+ipcMain.handle('store-tab-add-new', async (event, options = {}) => {
   trustedTabs(event);
   const store = activeStore, view = storeViews.get(store), url = view?.webContents.getURL();
-  return runImport(url, '', view?.webContents);
+  return runImport(url, options.category || '', view?.webContents, options);
 });
 function sendImport(text, running = importBusy) {
   importState = { running, text };
@@ -186,7 +202,21 @@ async function importRead(wc, store, wait = 5000) {
   } while (Date.now() < deadline);
   return result;
 }
-async function findUpcMatch(store, upc) {
+async function previewProduct(url, currentWc) {
+  if (importBusy || listBusy || refreshState.running) throw Error('Finish the current operation first.');
+  const store = sourceStore(url); importBusy = true; importCanceled = false; sendImport('Reading product details…');
+  try {
+    let result;
+    try { const wc = currentWc || importReader(store); if (!currentWc) await importNavigate(wc, url); result = await importRead(wc, store, 7000); }
+    catch { if (importCanceled) throw Error('Reading canceled.'); result = { url, candidates: [], reason: 'Details could not be read. You can still create the list entry.' }; }
+    if (importCanceled) throw Error('Reading canceled.');
+    const token = randomUUID();
+    productPreviews.set(token, { url, result, expires: Date.now() + 600000 });
+    while (productPreviews.size > 5) productPreviews.delete(productPreviews.keys().next().value);
+    return { token, url, ...suggestEntry(url, store, result), upc: result.details?.upc || '', prices: result.candidates?.map(p => ({ cents: p.cents, unit: p.purchaseUnit || 'package' })) || [] };
+  } finally { for (const window of importWindows.values()) if (!window.isDestroyed()) window.destroy(); importWindows.clear(); importBusy = false; sendImport('', false); }
+}
+async function findUpcMatch(store, upc, verifiedGtin) {
   const wc = importReader(store);
   await importNavigate(wc, searchUrl(store, upc));
   let links = [], direct, result;
@@ -207,18 +237,22 @@ async function findUpcMatch(store, upc) {
     if (direct?.url === url) result = direct;
     else { await importNavigate(wc, url); result = await importRead(wc, store); }
     if (result.accessBlocked) return { note: result.reason };
-    if (normalizeGtin(result.details?.upc) === normalizeGtin(upc) && result.candidates?.length) matches.push(result);
+    if (normalizeGtin(result.details?.verifiedGtin || result.details?.upc) === normalizeGtin(verifiedGtin) && result.candidates?.length) matches.push(result);
   }
   return matches.length === 1 ? { result: matches[0] } : { note: matches.length > 1 ? 'Several pages matched this UPC. Choose the correct product manually.' : 'No confirmed UPC match found. Add this store’s details manually.' };
 }
-async function runImport(url, category = '', currentWc) {
+async function runImport(url, category = '', currentWc, options = {}) {
   if (importBusy || listBusy || refreshState.running) throw Error('Finish or cancel the current operation before importing a product.');
   const store = sourceStore(url);
   importBusy = true; importCanceled = false;
   let created, matched = 0, result, text;
   sendImport('Reading product details…');
   try {
-    try {
+    if (options.token) {
+      const preview = productPreviews.get(options.token);
+      if (!preview || preview.url !== url || preview.expires < Date.now()) throw Error('Read the product details again before adding it.');
+      result = preview.result; productPreviews.delete(options.token);
+    } else try {
       const wc = currentWc || importReader(store);
       if (!currentWc) await importNavigate(wc, url);
       result = await importRead(wc, store, 7000);
@@ -229,24 +263,25 @@ async function runImport(url, category = '', currentWc) {
     }
     if (importCanceled) throw Error('Import canceled.');
     if (result.url && sourceStore(result.url) !== store) throw Error('The page changed to an unsupported product link.');
-    await persist(snapshot => { created = createImported(snapshot, store, result.url || url, result, category); });
+    await persist(snapshot => { created = createImported(snapshot, store, result.url || url, result, category, options); });
     captureTarget = created.id; updateTabs();
     for (const target of STORES.filter(s => s.id !== store)) {
-      if (!created.upc || importCanceled) break;
+      if (!created.verifiedGtin || importCanceled || !cart.items.some(i => i.originId === created.originId)) break;
       sendImport(`Searching ${target.name} for UPC ${created.upc}…`);
       let response;
-      try { response = await findUpcMatch(target.id, created.upc); }
+      try { response = await findUpcMatch(target.id, created.upc || created.verifiedGtin, created.verifiedGtin); }
       catch { if (importCanceled) break; response = { note: 'Could not check this store. Add its details manually.' }; }
       if (importCanceled) break;
       await persist(snapshot => {
-        const row = snapshot.items.find(i => i.originId === created.originId && i.store === target.id);
-        if (!row || row.priceOptions.length) return;
-        if (response.result) { try { if (applyImportedMatch(snapshot, created.originId, target.id, response.result)) matched++; else row.importNote = 'Selection changed during lookup. Fill in the details manually.'; } catch (error) { row.importNote = error.message; } }
-        else row.importNote = response.note;
+        const root = snapshot.items.find(i => i.originId === created.originId);
+        if (!root) return;
+        root.lookupNotes ||= {};
+        if (response.result) { try { if (applyImportedMatch(snapshot, created.originId, target.id, response.result)) { matched++; root.lookupNotes[target.id] = ''; } } catch (error) { root.lookupNotes[target.id] = error.message; } }
+        else root.lookupNotes[target.id] = response.note;
       });
     }
-    if (importCanceled && created) await persist(snapshot => { for (const row of snapshot.items.filter(i => i.originId === created.originId && !i.priceOptions.length)) row.importNote = 'Import stopped. Fill in this store’s details manually.'; });
-    text = `${importCanceled ? 'Import stopped' : 'Item added'}: ${created.name}. ${matched} other store${matched === 1 ? '' : 's'} matched by UPC. Unmatched entries are ready to fill in.`;
+    if (importCanceled && created) await persist(snapshot => { const root = snapshot.items.find(i => i.originId === created.originId); if (root) for (const s of STORES.filter(s => s.id !== store)) { root.lookupNotes ||= {}; root.lookupNotes[s.id] ||= 'Lookup stopped. Choose a product for this need.'; } });
+    text = `${importCanceled ? 'Import stopped' : 'Item added'}: ${created.name}. ${matched} other store${matched === 1 ? '' : 's'} matched by UPC. Product options are saved at quantity 0 until selected.`;
     return { ...created, matched, message: text };
   } catch (error) { text = created ? 'Import stopped. The added item remains saved.' : error.message; throw error; }
   finally {
@@ -390,7 +425,7 @@ async function listAction(action, name) {
     await fs.mkdir(folder, { recursive: true });
     const backup = path.join(folder, `List-${Date.now()}.grocery.json`);
     await writeList(backup, cart);
-    captureTarget = null;
+    captureTarget = null; productPreviews.clear();
     if (storeShell && !storeShell.isDestroyed()) storeShell.close();
     await persist(next); listFile = file;
     refreshState = { running: false, text: '' }; sendRefresh(); sendImport('', false);
@@ -408,7 +443,7 @@ app.whenReady().then(async () => {
   try {
     const raw = JSON.parse(await fs.readFile(cartPath(), 'utf8'));
     cart = migrateCart(raw);
-    if (raw.schema !== cart.schema) { await fs.copyFile(cartPath(), cartPath() + '.before-store-carts-' + Date.now()); await persist(cart); }
+    if (JSON.stringify(raw) !== JSON.stringify(cart)) { await fs.copyFile(cartPath(), cartPath() + '.before-store-carts-' + Date.now()); await persist(cart); }
   }
   catch (error) {
     cart = starterCart();
@@ -420,14 +455,15 @@ app.whenReady().then(async () => {
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', event => event.preventDefault());
   handle('list-file', listAction);
-  handle('import-product', (url, category) => runImport(url, category));
+  handle('preview-product', url => previewProduct(url));
+  handle('import-product', (url, category, options) => runImport(url, category, undefined, options));
   handle('cancel-import', () => { cancelImport(); return true; });
   handle('load', () => ({ cart, version: app.getVersion(), loadError, refreshState, importState }));
   handle('refresh-thumbnails', () => { if (refreshState.running || listBusy || importBusy) return false; runPriceRefresh('thumbnails').catch(() => {}); return true; });
   handle('empty-carts', async () => {
     if (listBusy || importBusy) throw Error('Finish the current list or import operation first.');
     if (refreshState.running) throw Error('Wait for the refresh to finish or cancel it before emptying carts.');
-    const result = await dialog.showMessageBox(main, { type: 'warning', buttons: ['Keep carts', 'Empty all carts'], defaultId: 0, cancelId: 0, title: 'Empty all carts?', message: 'Remove every item from all three store carts?', detail: 'Saved products, alternatives, quantities, prices and thumbnails will be removed. This cannot be undone.' });
+    const result = await dialog.showMessageBox(main, { type: 'warning', buttons: ['Keep carts', 'Empty all carts'], defaultId: 0, cancelId: 0, title: 'Empty all carts?', message: 'Set every store cart quantity to zero?', detail: 'Your shopping list, Needed amounts, saved products, alternatives, prices and thumbnails will be kept.' });
     if (result.response !== 1) return false;
     await persist(snapshot => applyChange(snapshot, { type: 'empty-carts' })); return true;
   });

@@ -15,7 +15,7 @@ test('add to all stores shares an origin but has independent quantities and alte
   applyChange(cart, { type: 'quantity', id: cart.items[0].id, quantity: 2 });
   cart.items[0].alternatives[0].name = 'Changed';
   assert.equal(cart.items[1].quantity, 0); assert.equal(cart.items[1].alternatives[0].name, 'Other cheese');
-  applyChange(cart, { type: 'empty-carts' }); assert.equal(cart.items.length, 0);
+  applyChange(cart, { type: 'empty-carts' }); assert.equal(cart.items.length, 3); assert.ok(cart.items.every(i => i.quantity === 0));
 });
 test('capture and price refresh save thumbnails, while image refresh preserves price and quantity', () => {
   const cart = fixture(), item = cart.items[0], before = { ...item.priceOptions[0] };

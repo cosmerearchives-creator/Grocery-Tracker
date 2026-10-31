@@ -217,13 +217,15 @@ function extractDetails(result, normalizeGtin) {
     const imageCode = result.thumbnail?.match(/\/(\d{12,14})(?:_|\.)/)?.[1];
     const base = retailerUpc.padStart(11, '0');
     const completed = Array.from({ length: 10 }, (_, digit) => base + digit).find(code => normalizeGtin(code));
-    if (imageCode && normalizeGtin(imageCode) && normalizeGtin(imageCode) === normalizeGtin(completed)) { codes.add(completed); upcNote = 'Full UPC verified against the main product image; Meijer displays a shortened code.'; }
+    if (imageCode && normalizeGtin(imageCode) && normalizeGtin(imageCode) === normalizeGtin(completed)) { codes.add(completed); upcNote = 'Store searches use the displayed UPC unchanged. A full barcode verified from the product image is stored separately for matching.'; }
   }
   const normalized = new Set([...codes].map(normalizeGtin));
-  const upc = normalized.size === 1 ? [...codes][0] : '';
+  const verifiedGtin = normalized.size === 1 ? [...codes][0] : '';
+  const upc = retailerUpc || verifiedGtin;
+  const brand = products.map(p => clean(typeof p.brand === 'string' ? p.brand : p.brand?.name)).find(Boolean) || '';
   const sizes = [...new Set(products.map(p => clean(p.size?.name || p.size || p.weight?.name)).filter(v => v && v !== '[object Object]'))];
-  const size = (sizes.length === 1 ? sizes[0] : name.match(/\b\d+(?:\.\d+)?\s*(?:fl\.?\s*oz|oz|ounces?|lb|lbs|pounds?|gal|gallons?|ml|liters?|litres?|ct|count|pack)\b/i)?.[0] || '').slice(0, 200);
-  return { ...result, details: { name, size, quantity: 1, upc, retailerUpc, upcNote, productPage } };
+  const size = (sizes.length === 1 ? sizes[0] : name.match(/\b\d+(?:\.\d+)?\s*(?:fl\.?\s*oz|oz|ounces?|lb|lbs|pounds?|gal|gallons?|ml|liters?|litres?|ct|count|pack)\b/i)?.[0] || (/\bgallon\b/i.test(name) ? '1 gallon' : '')).slice(0, 200);
+  return { ...result, details: { name, brand, size, quantity: 1, upc, verifiedGtin, retailerUpc, upcNote, productPage } };
 }
 function extractSearchLinks() {
   const links = new Set();

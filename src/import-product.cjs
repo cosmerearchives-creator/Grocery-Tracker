@@ -11,35 +11,44 @@ function fallbackName(url, store) {
   const slug = pieces.slice().reverse().find(p => !/^(?:\d+|product|products|p)$/i.test(p));
   return slug ? decodeURIComponent(slug).replace(/[-_]+/g, ' ').slice(0, 200) : `Product from ${STORES.find(s => s.id === store).name}`;
 }
-function createImported(cart, store, url, result, category = '') {
-  const before = cart.items.length, details = result?.details || {};
-  const name = details.name || result?.candidates?.[0]?.product || fallbackName(url, store);
-  const upc = normalizeGtin(details.upc) ? details.upc.replace(/[\s-]/g, '') : '';
-  applyChange(cart, { type: 'add-all', name: name.slice(0, 200), size: details.size || '', upc, category });
-  const rows = cart.items.slice(before), source = rows.find(i => i.store === store);
-  for (const item of rows) {
-    item.quantity = 1;
-    if (details.retailerUpc) item.retailerUpc = String(details.retailerUpc).slice(0, 30);
-    if (details.upcNote) item.barcodeNote = String(details.upcNote).slice(0, 250);
-    item.importNote = upc ? 'Waiting for an exact UPC match.' : 'No verified UPC found. Add this store’s product details manually.';
-  }
+function suggestEntry(url, store, result) {
+  const details = result?.details || {};
+  const productName = details.name || result?.candidates?.[0]?.product || fallbackName(url, store);
+  return { productName, name: generalName(productName, details.brand), requiredAmount: details.size || (/\bgallon\b/i.test(productName) ? '1 gallon' : '') };
+}
+function createImported(cart, store, url, result, category = '', options = {}) {
+  const details = result?.details || {}, suggested = suggestEntry(url, store, result);
+  const name = options.name === undefined ? suggested.name : String(options.name).trim();
+  const upc = /^\d{8,14}$/.test(details.upc || '') ? details.upc : '';
+  const verifiedGtin = normalizeGtin(details.verifiedGtin || details.upc) ? (details.verifiedGtin || details.upc).replace(/[\s-]/g, '') : '';
+  applyChange(cart, { type: 'add', store, name, size: details.size || '', upc, category });
+  const source = cart.items.at(-1);
+  source.requiredAmount = String(options.requiredAmount ?? suggested.requiredAmount).trim();
+  source.originalProductName = suggested.productName; source.listEntryNamed = true;
+  if (verifiedGtin) source.verifiedGtin = verifiedGtin;
+  if (details.retailerUpc) source.retailerUpc = String(details.retailerUpc).slice(0, 30);
+  if (details.upcNote) source.barcodeNote = String(details.upcNote).slice(0, 250);
   source.pendingUrl = url;
+  source.lookupNotes = Object.fromEntries(STORES.filter(s => s.id !== store).map(s => [s.id, verifiedGtin ? 'Waiting for an exact UPC match.' : 'No verified barcode found. Choose a product for this need.']));
   source.importNote = result?.reason || 'Product details need to be filled in.';
   if (result?.candidates?.length) {
-    try { applyDetected(cart, source.id, store, result); source.importNote = ''; }
+    try { applyDetected(cart, source.id, store, result); for (const [index] of source.priceOptions.entries()) applyChange(cart, { type: 'option-quantity', id: source.id, index, quantity: 0 }); source.importNote = ''; }
     catch (error) { source.importNote = String(error.message).slice(0, 400); }
   }
-  if (!source.priceOptions.length) source.importNote = 'Needs details: ' + source.importNote;
   validateCart(cart);
-  return { id: source.id, originId: source.originId, upc, name: source.name };
+  return { id: source.id, originId: source.originId, upc, verifiedGtin, name: source.name };
 }
 function applyImportedMatch(cart, originId, store, result) {
+  const source = cart.items.find(i => i.originId === originId);
+  if (!source) return false;
   const item = cart.items.find(i => i.originId === originId && i.store === store);
-  if (!item || item.priceOptions.length || item.quantity !== 1 || !item.available) return false;
-  const wanted = normalizeGtin(item.upc);
-  if (!wanted || normalizeGtin(result?.details?.upc) !== wanted || !validStoreUrl(store, result.url)) throw Error('The product page did not confirm the same UPC.');
-  applyDetected(cart, item.id, store, result);
-  item.pendingUrl = result.url; item.importNote = '';
+  if (item && (item.priceOptions.length || item.quantity !== 0 || !item.available)) return false;
+  const wanted = normalizeGtin(source.verifiedGtin || source.upc);
+  if (!wanted || normalizeGtin(result?.details?.verifiedGtin || result?.details?.upc) !== wanted || !validStoreUrl(store, result.url)) throw Error('The product page did not confirm the same UPC.');
+  const id = applyDetected(cart, source.id, store, result), target = cart.items.find(i => i.id === id);
+  for (const [index] of target.priceOptions.entries()) applyChange(cart, { type: 'option-quantity', id, index, quantity: 0 });
+  target.pendingUrl = result.url; target.importNote = '';
   validateCart(cart); return true;
 }
-module.exports = { sourceStore, createImported, applyImportedMatch };
+const { generalName } = require('./list-entry.cjs');
+module.exports = { sourceStore, createImported, applyImportedMatch, suggestEntry };

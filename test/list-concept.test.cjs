@@ -1,0 +1,61 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { generalName } = require('../src/list-entry.cjs');
+const { createImported, applyImportedMatch } = require('../src/import-product.cjs');
+const { applyChange, applyDetected, summarize, migrateCart, validateCart, checklist } = require('../src/model.cjs');
+const { serializeList, parseList } = require('../src/list-files.cjs');
+const { cartView } = require('../src/cart-view.cjs');
+const url = 'https://www.meijer.com/shopping/product/meijer-whole-milk-gallon/4125010200';
+const product = { url, thumbnail: 'https://img.example/milk.jpg', details: { name: 'Meijer Whole Milk, Gallon', size: '1 gallon', upc: '4125010200', verifiedGtin: '041250102007', retailerUpc: '4125010200' }, candidates: [{ product: 'Meijer Whole Milk, Gallon', cents: 282 }] };
+test('general list names strip recognized prefix brands without changing full product titles', () => {
+  assert.equal(generalName('Meijer Whole Milk, Gallon'), 'Whole Milk, Gallon');
+  assert.equal(generalName('Kraft American Singles', 'Kraft'), 'American Singles');
+  assert.equal(generalName('A+B Cheese', 'A+B'), 'Cheese');
+  const cart = { schema: 3, items: [] }, created = createImported(cart, 'meijer', url, product, 'Dairy');
+  assert.equal(cart.items.length, 1); assert.equal(cart.items[0].name, 'Whole Milk, Gallon');
+  assert.equal(cart.items[0].requiredAmount, '1 gallon'); assert.equal(cart.items[0].upc, '4125010200');
+  assert.equal(cart.items[0].priceOptions[0].product, 'Meijer Whole Milk, Gallon');
+  assert.equal(summarize(cart, 'meijer').cents, 0);
+  applyDetected(cart, created.id, 'meijer', product);
+  assert.equal(cart.items[0].name, 'Whole Milk, Gallon'); assert.equal(summarize(cart, 'meijer').cents, 282);
+});
+test('Needed requirements stay independent of store product quantities and survive emptying and save/load', () => {
+  const cart = { schema: 3, items: [] }, created = createImported(cart, 'meijer', url, product, 'Dairy', { name: 'American cheese', requiredAmount: '1 pound' });
+  applyDetected(cart, created.id, 'meijer', product);
+  const aldi = { ...product, url: 'https://www.aldi.us/product/milk', candidates: [{ product: 'Milk at ALDI', cents: 300 }] };
+  applyImportedMatch(cart, created.originId, 'aldi', aldi);
+  const other = cart.items.find(i => i.store === 'aldi');
+  applyChange(cart, { type: 'option-quantity', id: other.id, index: 0, quantity: 2 });
+  applyDetected(cart, created.id, 'meijer', { ...product, url: url + '?alt=1', candidates: [{ product: 'Alternative milk', cents: 250 }] }, true);
+  applyChange(cart, { type: 'option-quantity', id: created.id, index: 1, quantity: 1 });
+  const before = structuredClone(cart);
+  applyChange(cart, { type: 'empty-carts' });
+  assert.equal(cart.items.length, before.items.length);
+  assert.ok(cart.items.every(i => i.requiredAmount === '1 pound' && i.name === 'American cheese' && i.quantity === 0 && i.priceOptions.every(p => p.quantity === 0)));
+  assert.deepEqual(cart.items.flatMap(i => i.priceOptions.map(p => [p.product, p.cents, p.thumbnail])), before.items.flatMap(i => i.priceOptions.map(p => [p.product, p.cents, p.thumbnail])));
+  assert.equal(summarize(cart, 'meijer').cents, 0); assert.equal(summarize(cart, 'aldi').cents, 0);
+  assert.doesNotMatch(checklist(cart, 'meijer'), /☐/);
+  assert.deepEqual(parseList(serializeList(cart)), cart);
+});
+test('entry Delete cascades across store options without deleting an unrelated same-name need', () => {
+  const cart = { schema: 3, items: [] }, first = createImported(cart, 'meijer', url, product);
+  applyImportedMatch(cart, first.originId, 'aldi', { ...product, url: 'https://www.aldi.us/product/milk' });
+  const second = createImported(cart, 'meijer', url, product);
+  applyChange(cart, { type: 'delete-entry', id: first.id });
+  assert.equal(cart.items.length, 1); assert.equal(cart.items[0].id, second.id);
+});
+test('legacy imported roots keep their selected quantities while names and UPC search values upgrade safely', () => {
+  const cart = { schema: 3, items: [] }, created = createImported(cart, 'meijer', url, product);
+  applyDetected(cart, created.id, 'meijer', product);
+  cart.items[0].name = 'Meijer Whole Milk, Gallon'; delete cart.items[0].listEntryNamed;
+  cart.items[0].upc = '041250102007'; delete cart.items[0].verifiedGtin;
+  const copy = structuredClone(cart), upgraded = migrateCart(cart);
+  assert.deepEqual(cart, copy); assert.equal(upgraded.items[0].name, 'Whole Milk, Gallon');
+  assert.equal(upgraded.items[0].upc, '4125010200'); assert.equal(upgraded.items[0].verifiedGtin, '041250102007');
+  assert.equal(upgraded.items[0].priceOptions[0].quantity, 1);
+  assert.deepEqual(migrateCart(upgraded), upgraded); validateCart(upgraded);
+});
+test('one reusable need remains visible in every store even without a saved product there', () => {
+  const cart = { schema: 3, items: [] }; createImported(cart, 'meijer', url, product);
+  for (const store of ['meijer', 'aldi', 'gfs', 'all']) assert.equal(cartView(cart, ['meijer', 'aldi', 'gfs'], store, false).rows.length, 1);
+});

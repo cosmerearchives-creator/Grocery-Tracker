@@ -30,3 +30,5 @@ header{margin-bottom:20px}.cart{margin-top:0}.cart-divider{margin-bottom:8px}.si
 @media(max-height:780px){.sidebar-cart-heading #empty-carts{padding:8px 9px;font-size:11px}}
 
 .cart-divider{margin-bottom:0}.cart-controls .item-actions button{padding:8px 12px}.sidebar-carts{flex-shrink:0;margin-bottom:8px}.sidebar-cart-heading{margin-bottom:8px}.store-access{flex-shrink:0}.aside-bottom{padding-top:10px}
+
+.cart-divider span{text-transform:none}.sidebar-cart-heading #empty-carts{background:transparent;color:#eff4e9;border:1px solid #90a77a;border-radius:11px;font-weight:500}.sidebar-cart-heading #empty-carts:hover{background:#36513d}.entry-name{border:0;background:transparent;padding:0;text-align:left;font:inherit;line-height:inherit}.entry-name:hover{color:#426537;background:transparent;text-decoration:underline}.delete-entry{margin-left:auto;font-size:11px;color:#805544;align-self:flex-start}.needed-label{display:flex;align-items:center;gap:10px;margin:8px 0;color:#617255;font-size:11px}.needed-label input{font-size:12px;padding:7px 9px;width:230px}.item-top h3{max-width:40%}#entry-form label{margin-top:18px}
