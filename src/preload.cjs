@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('grocery', {
+  listFile: (action, name) => ipcRenderer.invoke('list-file', action, name),
   load: () => ipcRenderer.invoke('load'),
   change: change => ipcRenderer.invoke('change', change),
   onCartChanged: callback => ipcRenderer.on('cart-changed', (_event, cart) => callback(cart)),

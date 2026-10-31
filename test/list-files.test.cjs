@@ -1,0 +1,46 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { starterCart, applyChange, applyDetected, categoryOrder, checklist, validateCart } = require('../src/model.cjs');
+const { serializeList, parseList, readList, writeList } = require('../src/list-files.cjs');
+test('list files preserve all stores, options, thumbnails, categories and selections', () => {
+  const cart = starterCart();
+  applyChange(cart, { type: 'list-name', name: 'Weekly groceries' });
+  applyChange(cart, { type: 'category', id: 'starter-0', category: 'Dairy' });
+  applyDetected(cart, 'starter-0', 'aldi', { url: 'https://www.aldi.us/store/aldi/products/123', thumbnail: 'https://img.example/cheese.png', candidates: [{ product: 'Cheese', cents: 300 }] });
+  applyDetected(cart, 'starter-0', 'aldi', { url: 'https://www.aldi.us/store/aldi/products/456', candidates: [{ product: 'Other cheese', cents: 200 }] }, true);
+  applyChange(cart, { type: 'option-quantity', id: cart.items.at(-1).id, index: 1, quantity: 2 });
+  assert.deepEqual(parseList(serializeList(cart)), cart);
+  assert.deepEqual(parseList(JSON.stringify(cart)), cart);
+});
+test('list file read/write is repeatable, supports older carts and rejects broken or unsupported files', async t => {
+  const folder = await fs.mkdtemp(path.join(__dirname, 'grocery-lists-'));
+  t.after(() => fs.rm(folder, { recursive: true, force: true }));
+  const file = path.join(folder, 'Weekly.grocery.json'), cart = starterCart();
+  await writeList(file, cart);
+  assert.equal((await readList(file)).listName, 'Weekly');
+  cart.listName = 'Weekend'; await writeList(file, cart);
+  assert.deepEqual(await readList(file), cart);
+  assert.deepEqual((await fs.readdir(folder)), ['Weekly.grocery.json']);
+  assert.throws(() => parseList('{broken'), /not a readable/);
+  assert.throws(() => parseList('{"format":"grocery-tracker-list","version":2}'), /unsupported/);
+  assert.throws(() => parseList('{"schema":99,"items":[]}'), /Invalid/);
+  assert.throws(() => parseList(' '.repeat(25 * 1024 * 1024 + 1)), /too large/);
+  const old = { schema: 2, items: [{ id: 'old', originId: 'old', store: 'meijer', name: 'Milk', size: '', brand: '', match: 'equivalent', quantity: 1, offers: {}, priceOptions: [] }] };
+  assert.equal(parseList(JSON.stringify(old)).schema, 3);
+});
+test('categories update linked items without changing products, totals or quantities', () => {
+  const cart = { schema: 3, items: [] }; applyChange(cart, { type: 'add-all', name: 'Milk', category: 'Dairy' });
+  const id = cart.items[0].id; applyChange(cart, { type: 'quantity', id, quantity: 2 });
+  applyChange(cart, { type: 'category', id, category: '  Cold items  ' });
+  assert.ok(cart.items.every(i => i.category === 'Cold items')); assert.equal(cart.items[0].quantity, 2); assert.equal(cart.items[1].quantity, 0);
+  applyChange(cart, { type: 'add-all', name: 'Apples', category: 'Fruit' });
+  const sorted = categoryOrder(cart.items.filter(i => i.store === 'meijer'));
+  assert.deepEqual(sorted.map(i => i.name), ['Milk', 'Apples']);
+  applyChange(cart, { type: 'category', id, category: '' });
+  assert.deepEqual(categoryOrder(cart.items.filter(i => i.store === 'meijer')).map(i => i.name), ['Apples', 'Milk']);
+  assert.match(checklist(cart, 'meijer'), /UNCATEGORIZED[\s\S]*2 × Milk/);
+  assert.throws(() => validateCart({ ...cart, listName: 123 }));
+  assert.throws(() => validateCart({ ...cart, items: [{ ...cart.items[0], category: 'x'.repeat(61) }] }));
+});

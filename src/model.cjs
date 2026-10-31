@@ -66,9 +66,11 @@ function validateSearchDetails(item) {
 }
 function validateCart(cart) {
   if (!cart || cart.schema !== 3 || !Array.isArray(cart.items) || cart.items.length > 2000) throw Error('Invalid cart file.');
+  if (cart.listName !== undefined && (typeof cart.listName !== 'string' || !cart.listName.trim() || cart.listName.length > 100)) throw Error('Use a list name of 1–100 characters.');
   const seen = new Set();
   for (const item of cart.items) {
     if (!item || typeof item.id !== 'string' || seen.has(item.id) || typeof item.originId !== 'string' || !KNOWN_STORES.some(s => s.id === item.store) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || !Number.isInteger(item.quantity) || item.quantity < 0 || item.quantity > 999 || !['exact', 'equivalent'].includes(item.match) || typeof item.available !== 'boolean') throw Error('Invalid cart item.');
+    if (item.category !== undefined && (typeof item.category !== 'string' || item.category.length > 60 || /[\r\n]/.test(item.category))) throw Error('Use a category of up to 60 characters.');
     seen.add(item.id); validateSearchDetails(item);
     for (const key of ['brand', 'size']) if (typeof item[key] !== 'string' || item[key].length > 200) throw Error('Invalid product details.');
     if (!Array.isArray(item.priceOptions) || item.priceOptions.length > 50) throw Error('Use up to 50 saved options per store item.');
@@ -135,27 +137,36 @@ function money(cents) { return new Intl.NumberFormat('en-US', { style: 'currency
 function checklist(cart, store) {
   const s = STORES.find(s => s.id === store); if (!s) throw Error('Choose a store.');
   const total = summarize(cart, store), lines = [];
-  for (const item of cart.items.filter(i => i.store === store)) {
+  let category;
+  for (const item of categoryOrder(cart.items.filter(i => i.store === store))) {
+    if (item.available && !item.priceOptions.some(o => o.quantity > 0) && !(item.quantity > 0 && !item.offers[store])) continue;
+    const label = categoryName(item);
+    if (label !== category) { lines.push('', label.toUpperCase()); category = label; }
     if (!item.available) { lines.push(`NOT AVAILABLE AT THIS STORE: ${item.name}`); continue; }
     for (const quote of item.priceOptions.filter(o => o.quantity > 0)) lines.push(`☐ ${quote.quantity} × ${quote.product} | ${item.name} | ${quote.packs} package(s) per quantity | ${money(quote.cents * quote.packs * quote.quantity)} (${quote.source})${quote.refreshError ? ' — PRICE NOT REFRESHED' : ''}${quote.needsReview ? ' — NEEDS REVIEW' : ''}`);
     if (!item.offers[store] && item.quantity > 0) lines.push(`☐ ${item.quantity} × ${item.name}${item.size ? ' — ' + item.size : ''} | PRICE MISSING`);
   }
-  return [`GROCERY TRACKER — ${s.name}`, 'Marion, Ohio', '', ...lines, '', `${total.complete ? 'Estimated subtotal' : 'Known subtotal (incomplete)'}: ${money(total.cents)}`, `${total.missing} selection(s) without a price. ${total.unavailable} item(s) not available at this store.`, 'Quantity-zero options are saved only and excluded. Taxes and conditional coupons excluded.'].join('\n');
+  return [`GROCERY TRACKER — ${s.name}`, cart.listName || 'Untitled list', 'Marion, Ohio', '', ...lines, '', `${total.complete ? 'Estimated subtotal' : 'Known subtotal (incomplete)'}: ${money(total.cents)}`, `${total.missing} selection(s) without a price. ${total.unavailable} item(s) not available at this store.`, 'Quantity-zero options are saved only and excluded. Taxes and conditional coupons excluded.'].join('\n');
 }
 function applyChange(cart, change) {
   const item = cart.items.find(i => i.id === change.id);
-  if (change.type === 'empty-carts') {
+  if (change.type === 'list-name') {
+    cart.listName = String(change.name || '').trim();
+  } else if (change.type === 'empty-carts') {
     cart.items = cart.items.filter(i => !STORES.some(s => s.id === i.store));
   } else if (change.type === 'add-all') {
     const originId = randomUUID();
-    for (const store of STORES) cart.items.push({ id: randomUUID(), originId, store: store.id, name: String(change.name || '').trim(), brand: '', size: String(change.size || '').trim(), upc: change.upc || '', alternatives: structuredClone(change.alternatives || []), match: change.match || 'equivalent', quantity: 0, offers: {}, priceOptions: [], available: true });
+    for (const store of STORES) cart.items.push({ id: randomUUID(), originId, store: store.id, name: String(change.name || '').trim(), category: String(change.category || '').trim(), brand: '', size: String(change.size || '').trim(), upc: change.upc || '', alternatives: structuredClone(change.alternatives || []), match: change.match || 'equivalent', quantity: 0, offers: {}, priceOptions: [], available: true });
   } else if (change.type === 'add') {
     const id = randomUUID(); if (!STORES.some(s => s.id === change.store)) throw Error('Choose an active store.');
-    cart.items.push({ id, originId: id, store: change.store, name: String(change.name || '').trim(), brand: '', size: String(change.size || '').trim(), upc: change.upc || '', alternatives: change.alternatives || [], match: change.match || 'equivalent', quantity: 0, offers: {}, priceOptions: [], available: true });
+    cart.items.push({ id, originId: id, store: change.store, name: String(change.name || '').trim(), category: String(change.category || '').trim(), brand: '', size: String(change.size || '').trim(), upc: change.upc || '', alternatives: change.alternatives || [], match: change.match || 'equivalent', quantity: 0, offers: {}, priceOptions: [], available: true });
   } else {
     if (!item) throw Error('This item is no longer in your cart.');
     if (change.type === 'remove') cart.items = cart.items.filter(i => i.id !== item.id);
-    else if (change.type === 'quantity') {
+    else if (change.type === 'category') {
+      const category = String(change.category || '').trim();
+      for (const related of cart.items.filter(i => i.originId === item.originId)) related.category = category;
+    } else if (change.type === 'quantity') {
       const target = item.priceOptions.find(o => !o.isAlternative) || item;
       target.quantity = change.delta !== undefined ? target.quantity + change.delta : change.quantity; syncPrimary(item);
     } else if (change.type === 'option-quantity') {
@@ -237,4 +248,11 @@ function applyThumbnailRefresh(cart, itemId, previous, result, error, checked = 
   option.thumbnail = result.thumbnail; option.thumbnailChecked = checked; delete option.thumbnailError;
   syncPrimary(item); validateCart(cart); return changed ? 'changed' : 'unchanged';
 }
-module.exports = { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, summarize, money, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh, validThumbnail };
+const categoryName = item => item.category?.trim() || 'Uncategorized';
+function categoryOrder(items) {
+  return [...items].sort((a, b) => {
+    const x = categoryName(a), y = categoryName(b);
+    return (x === 'Uncategorized') - (y === 'Uncategorized') || x.localeCompare(y, 'en', { sensitivity: 'base' }) || a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
+  });
+}
+module.exports = { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, summarize, money, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh, validThumbnail, categoryName, categoryOrder };

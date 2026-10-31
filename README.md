@@ -6,7 +6,14 @@ A Windows grocery planner for Meijer, ALDI, and Gordon Food Service in Marion, O
 
 Download the `.exe` from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). This preview is unsigned, so Windows may display an unknown-publisher message.
 
-## Version 0.7.0
+## Version 0.8.0
+
+- **Shopping list files.** Name the working list, then use Save list to create a `.grocery.json` file containing all store carts, product choices, alternatives, quantities, prices, thumbnail links and categories. New list starts empty; Load list restores a saved file. Working changes continue to autosave locally; saved files change only when explicitly saved again. Save list can also save a copy under another filename.
+- **Safe list switching.** New/Load asks for confirmation and saves the previous working list under the app-data `list-backups` directory; the backup path appears beneath the list buttons and can be opened through Load list. Cancel, unreadable files and invalid data leave the current list intact. Older cart JSON files are supported through migration. Store sessions remain signed in. Open store tabs close on a list switch so they cannot save products against the previous list.
+- **Categories.** Assign suggested or custom categories on creation or on any item. Linked store rows share the category; quantities and product choices stay independent. Group by category organizes every view alphabetically, with Uncategorized last, and can be toggled off. Store checklists also group the selected products by category. Existing lists start uncategorized.
+- **Simpler item cards.** The per-item name/search dropdown and Alternatives & UPC button are removed. Search buttons use the main UPC when supplied, otherwise the item name. Saved product alternatives and their quantities remain available under each store.
+
+### Product images and all-store additions
 
 - **Add to all stores.** The add-item row no longer asks for a cart. New items appear in all three stores with independent quantities, prices and availability. All carts groups each new item once. Existing items are unchanged.
 - **Empty all carts.** One button clears every active cart's items, products, alternatives, prices and images after an explicit confirmation. Cancel leaves carts intact. Store sign-ins are retained.
@@ -29,8 +36,8 @@ Download the `.exe` from [the latest release](https://github.com/cosmerearchives
 - **ALDI search correction.** Names, UPCs and alternative searches now use `/store/aldi/s?k=...`, preserving the query rather than redirecting with an empty `k`.
 
 - **Comparisons on demand.** Linked prices from Meijer, ALDI and Gordon Food Service appear side by side when Show comparisons is enabled or All carts is selected. Each store retains its own cart and quantities.
-- **UPC search.** Add an optional 8, 12, 13 or 14 digit barcode, keeping leading zeros. Select the UPC from the item's search menu to search all three stores, or just one store. Retailers may vary in barcode search support; a UPC search does not guarantee an exact match.
-- **Acceptable alternatives.** Add alternative product names and optional UPCs when creating an item, or use Alternatives & UPC on an existing item. Enter one alternative per line, optionally followed by `| UPC`. Choose which name or UPC to search from the item's menu.
+- **UPC search.** Add an optional 8, 12, 13 or 14 digit barcode, keeping leading zeros. Search buttons use the main UPC when supplied, for all three stores or just one store. Retailers may vary in barcode search support; a UPC search does not guarantee an exact match.
+- **Acceptable alternatives.** Add alternative product names and optional UPCs when creating an item. Existing search details are preserved in saved files. Enter one alternative per line, optionally followed by `| UPC`. Store product alternatives can also be collected using Save as alternative.
 - **Saved product options.** Each saved product retains its own price, quantity and review state. Use this price makes a main option; Save as alternative collects an unselected option. Products with positive quantities all count in totals and exports. Removing one price preserves other saved options.
 - **Walmart removed.** Walmart is excluded from visible store lists, searches and exports. Previously saved Walmart rows remain stored locally, readable by the upgraded app but inactive.
 
@@ -85,6 +92,8 @@ Unit tests cover migration, independent product quantities and totals, store iso
 The v0.6 checks also cover store-only versus comparison views, deduplicated All carts, refresh changes/failures/skips, cancellation, edits during refresh, preservation of existing store pages, blocked-store request suppression, and continued checks at other stores. A live Kraft page was successfully refreshed; a subsequent Meijer request was denied by the retailer and safely retained/flagged. The app reports that restriction rather than trying to bypass it.
 
 The v0.7 checks cover adding linked rows to all three stores, grouping, empty-cart cancellation/confirmation, thumbnail capture and metadata selection, a live Meijer main-gallery fallback, retaining images on failures, and image-only refresh without repricing main or alternative products.
+
+The v0.8 checks cover full saved-file round trips, two independent list files, older-format loading, invalid/oversized file rejection, cancellation and working-list backup recovery, category grouping and linked-store edits, removed controls, and restart persistence.
 
 ## Far future
 

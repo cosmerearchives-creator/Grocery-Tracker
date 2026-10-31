@@ -4,6 +4,7 @@ const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
 const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh } = require('./model.cjs');
 const { extractScript } = require('./lookup.cjs');
+const { readList, writeList } = require('./list-files.cjs');
 const { cartView } = require('./cart-view.cjs');
 let main, cart, readyUpdate = false, updateBusy = false;
 let writeQueue = Promise.resolve();
@@ -11,6 +12,7 @@ const storeViews = new Map();
 const closedStores = new Set();
 let storeShell, activeStore = 'meijer';
 let captureTarget = null;
+let listBusy = false, listFile;
 const tabErrors = new Map();
 const refreshWindows = new Map();
 let refreshCanceled = false;
@@ -122,6 +124,7 @@ function closeStoreTab(id, originalView) {
 }
 ipcMain.handle('store-tab-use-product', async (event, mode = 'main') => {
   trustedTabs(event);
+  if (listBusy) throw Error('Finish the list operation first.');
   if (!['main', 'alternative'].includes(mode)) throw Error('Choose Use this price or Save as alternative.');
   const itemId = captureTarget, store = activeStore;
   if (!cart.items.some(i => i.id === itemId)) throw Error('Choose a cart item beside Use this price first.');
@@ -133,7 +136,7 @@ ipcMain.handle('store-tab-use-product', async (event, mode = 'main') => {
   const product = result.candidates[0];
   if (!originalView || originalView.webContents.isDestroyed() || originalView.webContents.getURL() !== result.url) throw Error('The product page changed. Try again on the intended product.');
   const asAlternative = mode === 'alternative';
-  await persist(snapshot => applyDetected(snapshot, itemId, store, result, asAlternative));
+  await persist(snapshot => { if (listBusy) throw Error('The shopping list is switching. Try again on the current list.'); applyDetected(snapshot, itemId, store, result, asAlternative); });
   if (!asAlternative) closeStoreTab(store, originalView);
   return { cents: product.cents, product: product.product, asAlternative };
 });
@@ -245,6 +248,41 @@ async function runPriceRefresh(mode = 'prices') {
     sendRefresh();
   }
 }
+async function listAction(action, name) {
+  if (listBusy || refreshState.running) throw Error('Finish or cancel the current operation before switching or saving lists.');
+  listBusy = true;
+  try {
+    await writeQueue;
+    const filters = [{ name: 'Grocery Tracker list', extensions: ['json'] }];
+    if (action === 'save') {
+      const safeName = (cart.listName || 'Shopping list').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/[. ]+$/, '').slice(0, 90) || 'Shopping list';
+      const result = await dialog.showSaveDialog(main, { defaultPath: listFile || safeName + '.grocery.json', filters });
+      if (result.canceled || !result.filePath) return { canceled: true };
+      if (path.resolve(result.filePath).toLowerCase() === path.resolve(cartPath()).toLowerCase()) throw Error('Choose a list file outside the app’s working-copy file.');
+      await writeList(result.filePath, cart); listFile = result.filePath;
+      return { message: 'Shopping list saved.', file: listFile };
+    }
+    let next, file;
+    if (action === 'load') {
+      const result = await dialog.showOpenDialog(main, { properties: ['openFile'], filters });
+      if (result.canceled || !result.filePaths.length) return { canceled: true };
+      file = result.filePaths[0]; next = await readList(file);
+    } else if (action === 'new') {
+      next = validateCart({ schema: 3, listName: String(name || '').trim() || 'Untitled list', items: [] });
+    } else throw Error('Unknown list action.');
+    const confirmation = await dialog.showMessageBox(main, { type: 'question', title: action === 'new' ? 'Start a new list?' : 'Load shopping list?', message: action === 'new' ? `Start “${next.listName}”?` : `Load “${next.listName}”?`, detail: 'The current working list will be backed up on this computer before switching. Saved list files stay unchanged until you save them again.', buttons: ['Cancel', action === 'new' ? 'Start new list' : 'Load list'], defaultId: 0, cancelId: 0 });
+    if (confirmation.response !== 1) return { canceled: true };
+    const folder = path.join(app.getPath('userData'), 'list-backups');
+    await fs.mkdir(folder, { recursive: true });
+    const backup = path.join(folder, `List-${Date.now()}.grocery.json`);
+    await writeList(backup, cart);
+    captureTarget = null;
+    if (storeShell && !storeShell.isDestroyed()) storeShell.close();
+    await persist(next); listFile = file;
+    refreshState = { running: false, text: 'Refresh checks saved product links across all store carts.' }; sendRefresh();
+    return { replaced: true, backup, message: action === 'new' ? 'New list ready. Previous working list backed up.' : 'Shopping list loaded. Previous working list backed up.' };
+  } finally { listBusy = false; }
+}
 async function checkUpdate() {
   if (!app.isPackaged) { sendStatus('Updates are available in the installed Windows app.'); return; }
   if (updateBusy || readyUpdate) { sendStatus(readyUpdate ? 'Update downloaded — ready to restart.' : 'Checking or downloading an update…', readyUpdate); return; }
@@ -267,22 +305,24 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', event => event.preventDefault());
+  handle('list-file', listAction);
   handle('load', () => ({ cart, version: app.getVersion(), loadError, refreshState }));
-  handle('refresh-thumbnails', () => { if (refreshState.running) return false; runPriceRefresh('thumbnails').catch(() => {}); return true; });
+  handle('refresh-thumbnails', () => { if (refreshState.running || listBusy) return false; runPriceRefresh('thumbnails').catch(() => {}); return true; });
   handle('empty-carts', async () => {
+    if (listBusy) throw Error('Finish the list operation first.');
     if (refreshState.running) throw Error('Wait for the refresh to finish or cancel it before emptying carts.');
     const result = await dialog.showMessageBox(main, { type: 'warning', buttons: ['Keep carts', 'Empty all carts'], defaultId: 0, cancelId: 0, title: 'Empty all carts?', message: 'Remove every item from all three store carts?', detail: 'Saved products, alternatives, quantities, prices and thumbnails will be removed. This cannot be undone.' });
     if (result.response !== 1) return false;
     await persist(snapshot => applyChange(snapshot, { type: 'empty-carts' })); return true;
   });
-  handle('refresh-prices', () => { if (refreshState.running) return false; runPriceRefresh().catch(() => {}); return true; });
+  handle('refresh-prices', () => { if (refreshState.running || listBusy) return false; runPriceRefresh().catch(() => {}); return true; });
   handle('cancel-price-refresh', () => { cancelPriceRefresh(); return true; });
   handle('stores', () => STORES.map(({ id, name }) => ({ id, name })));
   handle('cart-view', (selectedStore, comparisons) => {
     if (selectedStore !== 'all' && !STORES.some(s => s.id === selectedStore)) throw Error('Choose a store cart or All carts.');
     return cartView(cart, STORES.map(s => s.id), selectedStore, comparisons);
   });
-  handle('change', change => persist(snapshot => applyChange(snapshot, change)));
+  handle('change', change => { if (listBusy) throw Error('Finish the list operation first.'); return persist(snapshot => applyChange(snapshot, change)); });
   handle('open-store', id => { const wc = storeView(id).webContents; if (!wc.getURL()) wc.loadURL(STORES.find(s => s.id === id).home).catch(() => {}); return true; });
   handle('search-stores', searchStores);
   handle('search-store', searchStore);
