@@ -6,7 +6,12 @@ A Windows grocery planner for Meijer, ALDI, and Gordon Food Service in Marion, O
 
 Download the `.exe` from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). This preview is unsigned, so Windows may display an unknown-publisher message.
 
-## Version 0.8.1
+## Version 0.9.0
+
+- **Sidebar carts and totals.** Meijer, ALDI, Gordon Food Service and Total are four clickable sidebar buttons. The first three show the chosen store’s cart; Total opens All carts with comparisons enabled and shows the combined known subtotal. Amounts update when quantities, prices or availability change. The selected cart is highlighted. Selection, price-coverage and review details remain available in the store button’s tooltip.
+- **Simpler main area.** Removed the large dashboard store-summary cards and the “Your products, your quantities” instruction banner. List name / New / Save / Load now sit in the header between the introduction and checklist export controls. The duplicate cart tabs in the main area are removed. Store websites and sign-in remain available in an expandable sidebar section. The sidebar scrolls when necessary, and the header adapts to smaller windows.
+
+### Gordon pricing
 
 - **Gordon Food Service single and bulk pricing.** The reader checks the product’s own each/case purchase panels, matching their reorder number to the product URL so recommendation prices are excluded. When both exist, Use this price saves both: the single item is selected initially, while a new case option starts at zero. Save as alternative collects both at zero without replacing the main selection. Both purchase cards stay visible with their own quantity controls and explicit price-per-tub/bag/case labels. Prices are per purchase unit: a case price is counted once per case, without multiplying by the case contents.
 - **Refresh and manual lookup.** Price and thumbnail refresh match the saved single/case option individually. Missing or unavailable options retain the previous price and display a review warning. Manual product-link lookup also saves both prices when detected. Saved lists and exports retain the unit labels. A live check of the reported whipped-topping page detected both $5.49/tub and $60.99/case; these are store-session estimates and may change.
@@ -97,6 +102,8 @@ Unit tests cover migration, independent product quantities and totals, store iso
 The v0.6 checks also cover store-only versus comparison views, deduplicated All carts, refresh changes/failures/skips, cancellation, edits during refresh, preservation of existing store pages, blocked-store request suppression, and continued checks at other stores. A live Kraft page was successfully refreshed; a subsequent Meijer request was denied by the retailer and safely retained/flagged. The app reports that restriction rather than trying to bypass it.
 
 The v0.7 checks cover adding linked rows to all three stores, grouping, empty-cart cancellation/confirmation, thumbnail capture and metadata selection, a live Meijer main-gallery fallback, retaining images on failures, and image-only refresh without repricing main or alternative products.
+
+The v0.9 UI checks cover all four sidebar navigation buttons, live store and combined totals after quantity changes, store-only/All carts behavior, removed summary/banner elements, relocated list controls, sign-in links and a 980 × 700 window without horizontal overflow.
 
 The v0.8.1 checks cover Gordon purchase-panel isolation, independent single/case quantities and totals, case-only to dual-option updates, refresh matching and missing-option retention, alternative saving, and both toolbar/manual lookup flows.
 

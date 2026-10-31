@@ -47,16 +47,21 @@ async function render() {
   let view;
   try { view = await grocery.cartView(selectedStore, comparisons); } catch (e) { message(e.message); return; }
   if (generation !== renderGeneration) return;
-  $('stores').replaceChildren(); $('cart-tabs').replaceChildren();
+  $('cart-tabs').replaceChildren(); $('store-links').replaceChildren();
+  let combinedCents = 0;
   for (const store of stores) {
-    const total = summary(store.id);
-    const card = el('article', undefined, 'store-card' + (selectedStore === store.id ? ' best' : ''));
-    card.append(el('div', store.name, 'store-name'), el('div', `${total.count} SELECTIONS · ${total.reviews} NEED REVIEW`, 'badge'), el('div', format(total.cents), 'total'), el('p', `${total.matched} of ${total.count} selections priced · ${total.unavailable} unavailable`, 'coverage'));
-    card.append(button('View cart', () => selectStore(store.id)), button('Sign in / choose Marion ↗', () => grocery.openStore(store.id), 'store-open'));
-    $('stores').append(card);
-    const tab = button(store.name, () => selectStore(store.id), selectedStore === store.id ? 'primary' : ''); tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(selectedStore === store.id)); $('cart-tabs').append(tab);
+    const total = summary(store.id); combinedCents += total.cents;
+    const tab = button('', () => selectStore(store.id), 'cart-link' + (selectedStore === store.id ? ' selected' : ''));
+    tab.dataset.store = store.id; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(selectedStore === store.id)); tab.setAttribute('aria-label', store.name);
+    const mark = el('span', store.id === 'meijer' ? 'm' : store.id === 'aldi' ? 'ALDI' : 'GFS', 'store-mark mark-' + store.id); mark.setAttribute('aria-hidden', 'true');
+    const amount = el('span', format(total.cents), 'cart-amount'); amount.id = 'cart-total-' + store.id; tab.setAttribute('aria-describedby', amount.id); tab.append(mark, amount);
+    tab.title = `${store.name}: ${format(total.cents)} estimated known subtotal · ${total.matched} of ${total.count} selections priced · ${total.reviews} need review · ${total.unavailable} unavailable`;
+    $('cart-tabs').append(tab);
+    $('store-links').append(button(store.name + ' ↗', () => grocery.openStore(store.id), 'store-open'));
   }
-  const allTab = button('All carts', () => selectStore('all'), selectedStore === 'all' ? 'primary' : ''); allTab.setAttribute('role', 'tab'); allTab.setAttribute('aria-selected', String(selectedStore === 'all')); $('cart-tabs').append(allTab);
+  const allTab = button('', () => selectStore('all'), 'cart-link' + (selectedStore === 'all' ? ' selected' : ''));
+  allTab.dataset.store = 'all'; allTab.setAttribute('role', 'tab'); allTab.setAttribute('aria-selected', String(selectedStore === 'all')); allTab.setAttribute('aria-label', 'All carts'); allTab.title = 'All carts · combined estimated known subtotal';
+  const allAmount = el('span', format(combinedCents), 'cart-amount'); allAmount.id = 'cart-total-all'; allTab.setAttribute('aria-describedby', allAmount.id); allTab.append(el('span', 'Total', 'store-mark mark-all'), allAmount); $('cart-tabs').append(allTab);
   const items = [...view.rows];
   const categoryName = item => item.category?.trim() || 'Uncategorized';
   if (groupCategories) items.sort((a, b) => { const x = categoryName(a), y = categoryName(b); return (x === 'Uncategorized') - (y === 'Uncategorized') || x.localeCompare(y, 'en', { sensitivity: 'base' }) || a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }); });
