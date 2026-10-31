@@ -30,7 +30,8 @@ async function saveProduct(mode) {
   document.getElementById('status').textContent = 'Detecting product price…';
   try {
     const result = await storeTabs.useProduct(mode);
-    document.getElementById('status').textContent = result.asAlternative ? `Alternative saved at $${(result.cents / 100).toFixed(2)}. Quantity 0 until selected.` : `Saved $${(result.cents / 100).toFixed(2)} · Needs review. Store tab closed.`;
+    const prices = result.prices?.map(p => `$${(p.cents / 100).toFixed(2)} / ${p.unit}`).join(' + ');
+    document.getElementById('status').textContent = result.prices?.length > 1 ? `Saved ${prices} · Needs review. ${result.asAlternative ? 'Quantities 0 until selected.' : 'Case quantity 0 until selected. Store tab closed.'}` : result.asAlternative ? `Alternative saved at $${(result.cents / 100).toFixed(2)}. Quantity 0 until selected.` : `Saved $${(result.cents / 100).toFixed(2)} · Needs review. Store tab closed.`;
   } catch (error) { showError(error); }
   finally { detecting = false; const disabled = !document.getElementById('target').value || !tabs.children.length; document.getElementById('use-product').disabled = disabled; document.getElementById('save-alternative').disabled = disabled; }
 }

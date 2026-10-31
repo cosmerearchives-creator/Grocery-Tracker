@@ -52,6 +52,7 @@ function validThumbnail(value) {
   try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && value.length <= 4000; } catch { return false; }
 }
 function validateOffer(store, offer) {
+  if (offer?.purchaseKind !== undefined && (!['single', 'case'].includes(offer.purchaseKind) || typeof offer.purchaseUnit !== 'string' || !offer.purchaseUnit.trim() || offer.purchaseUnit.length > 60 || !/^\d{1,30}$/.test(offer.productCode))) throw Error('Invalid single-item or case option.');
   if (offer?.thumbnail && !validThumbnail(offer.thumbnail)) throw Error('Invalid product image link.');
   if (!offer || !Number.isInteger(offer.cents) || offer.cents <= 0 || offer.cents > 10000000 || !Number.isInteger(offer.packs) || offer.packs < 1 || offer.packs > 999 || typeof offer.product !== 'string' || !offer.product.trim() || offer.product.length > 600 || typeof offer.checked !== 'string' || !['manual', 'web-estimate', 'shelf'].includes(offer.source) || (offer.needsReview !== undefined && typeof offer.needsReview !== 'boolean')) throw Error('Invalid price.');
   if (offer.url && !validStoreUrl(store, offer.url)) throw Error('Invalid store product link.');
@@ -104,15 +105,15 @@ function rememberOffer(item, offer, asAlternative = false) {
     Object.assign(existing, offer);
     if (!asAlternative && existing.isAlternative) {
       const previous = options.find(o => !o.isAlternative);
-      if (previous) { previous.isAlternative = true; previous.quantity = 0; }
+      if (previous) { previous.isAlternative = true; if (!offer.purchaseKind || previous.productCode !== offer.productCode) previous.quantity = 0; }
       existing.isAlternative = false; existing.quantity = Math.max(1, existing.quantity);
     }
     if (!asAlternative) existing.quantity = Math.max(1, existing.quantity);
     syncPrimary(item); return;
   }
   const previousMain = options.find(o => !o.isAlternative);
-  const quantity = asAlternative ? 0 : Math.max(1, previousMain?.quantity || item.quantity || 0);
-  if (!asAlternative && previousMain) { previousMain.isAlternative = true; previousMain.quantity = 0; }
+  const quantity = asAlternative ? 0 : offer.purchaseKind && previousMain?.purchaseKind && previousMain.productCode === offer.productCode && previousMain.purchaseKind !== offer.purchaseKind ? 1 : Math.max(1, previousMain?.quantity || item.quantity || 0);
+  if (!asAlternative && previousMain) { previousMain.isAlternative = true; if (!offer.purchaseKind || previousMain.productCode !== offer.productCode) previousMain.quantity = 0; }
   options.push({ ...offer, quantity, isAlternative: asAlternative });
   syncPrimary(item);
 }
@@ -177,6 +178,7 @@ function applyChange(cart, change) {
     else if (change.type === 'details') { item.size = change.size; item.match = change.match; item.offers = {}; item.priceOptions = []; item.quantity = 0; }
     else if (change.type === 'search-details') { item.upc = change.upc || ''; item.alternatives = change.alternatives || []; }
     else if (change.type === 'ensure-store') ensureStoreItem(cart, item, change.store);
+    else if (change.type === 'detected-offers') applyDetected(cart, item.id, change.store, change.result);
     else if (change.type === 'offer') {
       const target = ensureStoreItem(cart, item, change.store || item.store); target.available = true;
       if (change.index !== undefined) {
@@ -196,18 +198,33 @@ function applyChange(cart, change) {
 }
 function applyDetected(cart, itemId, store, result, asAlternative = false) {
   const source = cart.items.find(i => i.id === itemId); if (!source) throw Error('That item was removed from your cart.');
-  if (!STORES.some(s => s.id === store) || !validStoreUrl(store, result.url) || result.candidates.length !== 1) throw Error('No single store price was detected.');
-  const product = result.candidates[0]; if (/OutOfStock|Discontinued|SoldOut/i.test(product.availability)) throw Error('This product is unavailable.');
+  const grouped = store === 'gfs' && result.purchaseOptions === true;
+  if (!STORES.some(s => s.id === store) || !validStoreUrl(store, result.url) || !Array.isArray(result.candidates) || (grouped ? result.candidates.length < 1 || result.candidates.length > 2 || new Set(result.candidates.map(p => p.purchaseKind)).size !== result.candidates.length || result.candidates.some(p => !['single', 'case'].includes(p.purchaseKind)) : result.candidates.length !== 1)) throw Error('No readable store price was detected.');
   const target = ensureStoreItem(cart, source, store);
+  const available = result.candidates.filter(p => !/OutOfStock|Discontinued|SoldOut/i.test(p.availability));
+  if (!available.length) throw Error('This product is unavailable.');
   if (!asAlternative) target.available = true;
-  rememberOffer(target, { cents: product.cents, packs: 1, product: product.product, ...(validThumbnail(result.thumbnail) ? { thumbnail: result.thumbnail } : {}), source: 'web-estimate', url: result.url, checked: new Date().toISOString(), needsReview: true }, asAlternative);
-  validateCart(cart); return target.id;
+  for (const [index, product] of result.candidates.entries()) {
+    const unavailable = /OutOfStock|Discontinued|SoldOut/i.test(product.availability);
+    if (!grouped && unavailable) throw Error('This product is unavailable.');
+    const existing = target.priceOptions.find(o => o.product === product.product && o.url === result.url);
+    const alternative = asAlternative || index > 0 || unavailable;
+    rememberOffer(target, { cents: product.cents, packs: product.packs || 1, product: product.product, ...(grouped ? { purchaseKind: product.purchaseKind, purchaseUnit: product.purchaseUnit, productCode: product.productCode, purchaseUnavailable: unavailable } : {}), ...(validThumbnail(result.thumbnail) ? { thumbnail: result.thumbnail } : {}), source: 'web-estimate', url: result.url, checked: new Date().toISOString(), needsReview: true }, alternative);
+    if (unavailable && !existing) target.priceOptions.find(o => o.product === product.product && o.url === result.url).quantity = 0;
+  }
+  syncPrimary(target); validateCart(cart); return target.id;
+}
+function matchingRefresh(option, result) {
+  if (!result?.purchaseOptions) return result;
+  const candidates = result.candidates.filter(p => option.purchaseKind ? p.purchaseKind === option.purchaseKind && p.productCode === option.productCode : p.product === option.product);
+  return { ...result, candidates };
 }
 function applyPriceRefresh(cart, itemId, previous, result, error, checked = new Date().toISOString()) {
   const item = cart.items.find(i => i.id === itemId);
   const option = item?.priceOptions.find(o => optionKey(o) === optionKey(previous));
   if (!option) return 'skipped';
   if (option.cents !== previous.cents || option.checked !== previous.checked || option.source !== previous.source) return 'skipped';
+  result = matchingRefresh(option, result);
   option.lastRefreshAttempt = checked;
   if (error || result?.candidates?.length !== 1) {
     option.refreshError = String(error || result?.reason || 'No readable price was found.').slice(0, 300);
@@ -223,9 +240,11 @@ function applyPriceRefresh(cart, itemId, previous, result, error, checked = new 
     option.needsReview = true; syncPrimary(item); validateCart(cart); return 'failed';
   }
   if (/OutOfStock|Discontinued|SoldOut/i.test(detected.availability)) {
+    if (option.purchaseKind) option.purchaseUnavailable = true;
     option.refreshError = 'This product is currently marked unavailable on the store page.';
     option.needsReview = true; syncPrimary(item); validateCart(cart); return 'failed';
   }
+  if (option.purchaseKind) option.purchaseUnavailable = false;
   const changed = option.cents !== detected.cents;
   if (validThumbnail(result.thumbnail)) { option.thumbnail = result.thumbnail; option.thumbnailChecked = checked; delete option.thumbnailError; }
   option.cents = detected.cents; option.checked = checked; option.refreshDetectedProduct = String(detected.product || '').slice(0, 600);
@@ -238,6 +257,7 @@ function applyThumbnailRefresh(cart, itemId, previous, result, error, checked = 
   const option = item?.priceOptions.find(o => optionKey(o) === optionKey(previous));
   if (!option || option.thumbnail !== previous.thumbnail) return 'skipped';
   const identity = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  result = matchingRefresh(option, result);
   const pageName = result?.candidates?.[0]?.product || result?.imageProduct;
   option.thumbnailAttempt = checked;
   if (error || !validThumbnail(result?.thumbnail) || !pageName || identity(pageName) !== identity(option.product)) {

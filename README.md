@@ -6,7 +6,12 @@ A Windows grocery planner for Meijer, ALDI, and Gordon Food Service in Marion, O
 
 Download the `.exe` from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). This preview is unsigned, so Windows may display an unknown-publisher message.
 
-## Version 0.8.0
+## Version 0.8.1
+
+- **Gordon Food Service single and bulk pricing.** The reader checks the product’s own each/case purchase panels, matching their reorder number to the product URL so recommendation prices are excluded. When both exist, Use this price saves both: the single item is selected initially, while a new case option starts at zero. Save as alternative collects both at zero without replacing the main selection. Both purchase cards stay visible with their own quantity controls and explicit price-per-tub/bag/case labels. Prices are per purchase unit: a case price is counted once per case, without multiplying by the case contents.
+- **Refresh and manual lookup.** Price and thumbnail refresh match the saved single/case option individually. Missing or unavailable options retain the previous price and display a review warning. Manual product-link lookup also saves both prices when detected. Saved lists and exports retain the unit labels. A live check of the reported whipped-topping page detected both $5.49/tub and $60.99/case; these are store-session estimates and may change.
+
+### Named lists and categories
 
 - **Shopping list files.** Name the working list, then use Save list to create a `.grocery.json` file containing all store carts, product choices, alternatives, quantities, prices, thumbnail links and categories. New list starts empty; Load list restores a saved file. Working changes continue to autosave locally; saved files change only when explicitly saved again. Save list can also save a copy under another filename.
 - **Safe list switching.** New/Load asks for confirmation and saves the previous working list under the app-data `list-backups` directory; the backup path appears beneath the list buttons and can be opened through Load list. Cancel, unreadable files and invalid data leave the current list intact. Older cart JSON files are supported through migration. Store sessions remain signed in. Open store tabs close on a list switch so they cannot save products against the previous list.
@@ -92,6 +97,8 @@ Unit tests cover migration, independent product quantities and totals, store iso
 The v0.6 checks also cover store-only versus comparison views, deduplicated All carts, refresh changes/failures/skips, cancellation, edits during refresh, preservation of existing store pages, blocked-store request suppression, and continued checks at other stores. A live Kraft page was successfully refreshed; a subsequent Meijer request was denied by the retailer and safely retained/flagged. The app reports that restriction rather than trying to bypass it.
 
 The v0.7 checks cover adding linked rows to all three stores, grouping, empty-cart cancellation/confirmation, thumbnail capture and metadata selection, a live Meijer main-gallery fallback, retaining images on failures, and image-only refresh without repricing main or alternative products.
+
+The v0.8.1 checks cover Gordon purchase-panel isolation, independent single/case quantities and totals, case-only to dual-option updates, refresh matching and missing-option retention, alternative saving, and both toolbar/manual lookup flows.
 
 The v0.8 checks cover full saved-file round trips, two independent list files, older-format loading, invalid/oversized file rejection, cancellation and working-list backup recovery, category grouping and linked-store edits, removed controls, and restart persistence.
 

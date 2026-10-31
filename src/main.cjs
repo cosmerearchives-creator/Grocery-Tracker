@@ -138,7 +138,7 @@ ipcMain.handle('store-tab-use-product', async (event, mode = 'main') => {
   const asAlternative = mode === 'alternative';
   await persist(snapshot => { if (listBusy) throw Error('The shopping list is switching. Try again on the current list.'); applyDetected(snapshot, itemId, store, result, asAlternative); });
   if (!asAlternative) closeStoreTab(store, originalView);
-  return { cents: product.cents, product: product.product, asAlternative };
+  return { cents: product.cents, product: product.product, asAlternative, prices: result.candidates.map(p => ({ cents: p.cents, unit: p.purchaseUnit || 'package' })) };
 });
 function selectedQuery(itemId, choiceId) {
   const item = cart.items.find(i => i.id === itemId);

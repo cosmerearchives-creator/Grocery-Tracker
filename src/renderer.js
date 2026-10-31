@@ -96,12 +96,13 @@ async function render() {
       if (unavailable) block.append(el('span', 'Not available at this store', 'unavailable-badge'));
       const primaryIndex = related?.priceOptions.findIndex(o => !o.isAlternative) ?? -1;
       if (primaryIndex >= 0) block.append(productCard(related, related.priceOptions[primaryIndex], primaryIndex, store));
-      else {
+      else if (!related?.priceOptions.some(o => o.purchaseKind)) {
         const empty = el('div', undefined, 'empty-option');
         empty.append(button('+ Add / look up price', () => openPrice(related || item, store.id)), el('span', unavailable ? 'Excluded from this store’s total' : 'No main product price saved', 'source'), quantityControls(item, related, undefined, store));
         block.append(empty);
       }
-      const alternatives = related?.priceOptions.map((quote, index) => ({ quote, index })).filter(o => o.quote.isAlternative) || [];
+      for (const [index, quote] of (related?.priceOptions || []).entries()) if (quote.purchaseKind && index !== primaryIndex) block.append(productCard(related, quote, index, store));
+      const alternatives = related?.priceOptions.map((quote, index) => ({ quote, index })).filter(o => o.quote.isAlternative && !o.quote.purchaseKind) || [];
       if (alternatives.length) {
         const key = `${item.originId}:${store.id}`, selected = alternatives.filter(o => o.quote.quantity > 0).length;
         const toggle = button(`Alternatives (${alternatives.length})${selected ? ` · ${selected} selected` : ''} ${expandedAlternatives.has(key) ? '▴' : '▾'}`, () => { if (expandedAlternatives.has(key)) expandedAlternatives.delete(key); else expandedAlternatives.add(key); render(); }, 'alternatives-toggle');
@@ -137,14 +138,15 @@ function quantityControls(source, item, index, store) {
 }
 function productCard(item, quote, index, store) {
   const card = el('div', undefined, 'product-option' + (item.available ? '' : ' unavailable')); card.dataset.option = index;
-  const heading = el('div', undefined, 'product-option-heading'); heading.append(el('span', quote.isAlternative ? 'Alternative' : 'Main option', 'offer-store'), quantityControls(item, item, index, store));
-  card.append(heading, button(quote.product, () => openPrice(item, store.id, index), 'product-name'), el('strong', format(quote.cents) + ' / package', 'option-price'), el('span', `${quote.packs} package(s) per quantity · ${!item.available ? 'Excluded while marked not available' : quote.quantity > 0 ? format(quote.cents * quote.packs * quote.quantity) + ' selected' : 'Saved only · quantity 0'}`, 'source'));
+  const heading = el('div', undefined, 'product-option-heading'); heading.append(el('span', quote.purchaseKind ? `${quote.isAlternative && quote.purchaseKind !== 'case' ? 'Alternative · ' : ''}${quote.purchaseKind === 'case' ? 'Bulk' : 'Single item'} · ${quote.purchaseUnit}` : quote.isAlternative ? 'Alternative' : 'Main option', 'offer-store'), quantityControls(item, item, index, store));
+  card.append(heading, button(quote.product, () => openPrice(item, store.id, index), 'product-name'), el('strong', format(quote.cents) + ' / ' + (quote.purchaseUnit || 'package'), 'option-price'), el('span', `${quote.packs} package(s) per quantity · ${!item.available ? 'Excluded while marked not available' : quote.quantity > 0 ? format(quote.cents * quote.packs * quote.quantity) + ' selected' : 'Saved only · quantity 0'}`, 'source'));
   card.append(el('span', `${quote.source === 'shelf' ? 'Shelf / receipt verified' : quote.source === 'web-estimate' ? 'Online estimate' : 'Manual estimate'} · ${new Date(quote.checked).toLocaleDateString()}`, 'source'));
   if (quote.lastRefreshAttempt) card.append(el('span', `${quote.refreshError ? 'Last attempt' : 'Price checked'}: ${new Date(quote.lastRefreshAttempt).toLocaleString()}`, 'source'));
   if (quote.refreshError) card.append(el('span', `Couldn’t refresh: ${quote.refreshError}`, 'refresh-error'));
   if (quote.refreshDetectedProduct && quote.refreshDetectedProduct !== quote.product) card.append(el('span', `Page describes: ${quote.refreshDetectedProduct}`, 'source'));
   const main = item.priceOptions.find(o => !o.isAlternative);
-  if (quote.isAlternative && main && main.cents !== quote.cents) card.append(el('span', `${format(Math.abs(main.cents - quote.cents))} ${quote.cents < main.cents ? 'less' : 'more'} per listed package than the main option`, 'source'));
+  if (quote.isAlternative && !quote.purchaseKind && main && main.cents !== quote.cents) card.append(el('span', `${format(Math.abs(main.cents - quote.cents))} ${quote.cents < main.cents ? 'less' : 'more'} per listed package than the main option`, 'source'));
+  if (quote.purchaseUnavailable) card.append(el('span', 'This purchase option is marked out of stock. Check the store before buying.', 'refresh-error'));
   if (quote.needsReview) card.append(el('span', 'Needs review', 'review-badge'), button('Mark reviewed', () => change({ type: 'review', id: item.id, index }), 'mark-reviewed'));
   const metadata = el('div', undefined, 'product-metadata');
   const notes = [...card.querySelectorAll('.source, .refresh-error')];
@@ -211,21 +213,27 @@ $('show-comparisons').onchange = event => { comparisons = event.target.checked; 
 $('refresh-prices').onclick = () => grocery.refreshPrices().catch(e => message(e.message));
 $('cancel-refresh').onclick = () => grocery.cancelPriceRefresh().catch(e => message(e.message));
 grocery.onPriceRefresh(showRefresh);
+$('offer-url').oninput = () => { if (editing) editing.lookupGroup = null; };
 $('close-price').onclick = () => $('price-dialog').close();
 $('delete-offer').onclick = async () => { try { await change({ type: 'remove-offer', id: editing.id, index: editing.index }); $('price-dialog').close(); } catch {} };
 $('price-form').onsubmit = async event => {
   event.preventDefault();
   try {
-    await change({ type: 'offer', id: editing.id, store: editing.store, index: editing.index, offer: { ...(editing.thumbnail ? { thumbnail: editing.thumbnail } : {}), cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim(), source: $('offer-source').value, url: $('offer-url').value.trim(), checked: new Date().toISOString() } });
+    if (editing.lookupGroup) {
+      const result = structuredClone(editing.lookupGroup);
+      Object.assign(result.candidates[0], { cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim() });
+      await change({ type: 'detected-offers', id: editing.id, store: editing.store, result });
+    } else await change({ type: 'offer', id: editing.id, store: editing.store, index: editing.index, offer: { ...(editing.thumbnail ? { thumbnail: editing.thumbnail } : {}), cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim(), source: $('offer-source').value, url: $('offer-url').value.trim(), checked: new Date().toISOString() } });
     $('price-dialog').close();
   } catch {}
 };
 $('lookup').onclick = async () => {
-  const context = editing; $('lookup').disabled = true; $('lookup-status').textContent = 'Detecting product price…';
+  const context = editing; editing.lookupGroup = null; $('lookup').disabled = true; $('lookup-status').textContent = 'Detecting product price…';
   try {
     const result = await grocery.capture(context.store, $('offer-url').value.trim()); if (editing !== context) return;
-    if (result.candidates.length !== 1) { $('lookup-status').textContent = result.reason; return; }
-    const p = result.candidates[0]; editing.thumbnail = result.thumbnail || ''; $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2); $('offer-packs').value = 1; $('offer-url').value = result.url; $('offer-source').value = 'web-estimate'; $('offer-confirm').checked = false; $('lookup-status').textContent = `Detected ${format(p.cents)}. Check the package and save.`;
+    if (result.candidates.length !== 1 && !(context.store === 'gfs' && result.purchaseOptions && result.candidates.length === 2)) { $('lookup-status').textContent = result.reason; return; }
+    editing.lookupGroup = context.store === 'gfs' && result.purchaseOptions ? result : null;
+    const p = result.candidates[0]; editing.thumbnail = result.thumbnail || ''; $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2); $('offer-packs').value = 1; $('offer-url').value = result.url; $('offer-source').value = 'web-estimate'; $('offer-confirm').checked = false; $('lookup-status').textContent = editing.lookupGroup?.candidates.length === 2 ? `Detected ${result.candidates.map(p => format(p.cents) + ' / ' + p.purchaseUnit).join(' and ')}. Saving keeps both for review; the case starts at quantity 0.` : `Detected ${format(p.cents)}. Check the package and save.`;
   } catch (e) { $('lookup-status').textContent = e.message; } finally { $('lookup').disabled = false; }
 };
 $('copy').onclick = () => grocery.export($('export-store').value, 'copy').then(message).catch(e => message(e.message));

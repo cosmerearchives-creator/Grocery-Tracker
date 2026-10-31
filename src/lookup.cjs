@@ -19,6 +19,30 @@ function extractProduct() {
   const heading = [...document.querySelectorAll('h1')].find(visible);
   const title = clean(heading?.textContent || document.title);
   if (/^(access denied|verify you are human|robot or human|security check|sign in required)/i.test(title)) return { url: pageUrl, candidates: [], accessBlocked: true, reason: 'The store blocked this request or requires verification. Open its store tab to sign in, or try again later.' };
+  // GFS deliberately offers both each and case pricing. Bind the purchase
+  // panels to this page's reorder number; recommendation cards are excluded.
+  if (heading && /(^|\.)gfsstore\.com$/.test(new URL(pageUrl).hostname) && /^\/products\/\d+\/?$/.test(new URL(pageUrl).pathname)) {
+    const code = new URL(pageUrl).pathname.split('/').filter(Boolean).at(-1);
+    const options = [];
+    for (const panel of document.querySelectorAll('#each-detail, #case-detail')) {
+      if (!visible(panel)) continue;
+      const button = panel.querySelector('button.add-to-list-button[data-reorder_number]');
+      if (!button || button.getAttribute('data-reorder_number') !== code) continue;
+      const kind = panel.getAttribute('id') === 'case-detail' ? 'case' : 'single';
+      const prices = [...panel.querySelectorAll('.unit_price')].filter(visible).map(n => clean(n.textContent));
+      const descriptions = [...panel.querySelectorAll('.unit_description')].filter(visible).map(n => clean(n.textContent));
+      const price = [...new Set(prices)]; const units = [...new Set(descriptions)];
+      if (price.length !== 1 || units.length !== 1 || !units[0] || units[0].length > 60) continue;
+      const match = price[0].match(/^\$\s*(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/);
+      if (!match) continue;
+      const cents = Number(match[1].replace(/,/g, '')) * 100 + Number(match[2]);
+      if (cents <= 0 || cents > 10000000) continue;
+      const stock = panel.querySelector('.item_inventory_stock_level');
+      const unavailable = button.disabled || (stock && /^0$/.test(clean(stock.textContent)));
+      options.push({ product: `${title} — ${kind === 'case' ? 'Bulk' : 'Single item'} (${units[0]})`, cents, availability: unavailable ? 'OutOfStock' : '', purchaseKind: kind, purchaseUnit: units[0], productCode: code });
+    }
+    if (options.length && options.length <= 2 && new Set(options.map(o => o.purchaseKind)).size === options.length) return { url: pageUrl, purchaseOptions: true, candidates: options, reason: 'Gordon Food Service single-item and bulk prices are listed separately.' };
+  }
   // Meijer's current product pages expose variant prices as visible text,
   // while their JSON-LD can contain only ratings and breadcrumbs.
   // Bind the selected controls to the product ID in this page's URL so other
@@ -62,7 +86,7 @@ function extractProduct() {
       candidates.push({ product: clean(product.name || title), cents: Math.round(price * 100), availability: clean(offer.availability), productUrl: product.url || '', offerUrl: offer.url || '', sku: clean(offer.sku || product.sku), size: clean(product.size?.name || product.size || product.weight?.name), variant: clean(offer.name), primary: !!heading && normalize(product.name) === normalize(title) });
     }
   }
-  // Only one store lookup offer is returned. Never pick a first/cheapest variant
+  // Other stores return one offer. Never pick a first/cheapest variant
   // or an AggregateOffer.lowPrice, which can belong to a different package.
   const unique = values => [...new Map(values.map(v => [JSON.stringify([v.product, v.cents, v.sku, v.size, v.variant, v.availability]), v])).values()];
   const finish = (values, reason) => {
