@@ -3,7 +3,9 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
 const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh } = require('./model.cjs');
-const { extractScript } = require('./lookup.cjs');
+const { sourceStore, createImported, applyImportedMatch } = require('./import-product.cjs');
+const { normalizeGtin } = require('./barcode.cjs');
+const { extractScript, searchLinksScript } = require('./lookup.cjs');
 const { readList, writeList } = require('./list-files.cjs');
 const { cartView } = require('./cart-view.cjs');
 let main, cart, readyUpdate = false, updateBusy = false;
@@ -13,10 +15,13 @@ const closedStores = new Set();
 let storeShell, activeStore = 'meijer';
 let captureTarget = null;
 let listBusy = false, listFile;
+let importBusy = false, importCanceled = false;
+let importState = { running: false, text: '' };
+const importWindows = new Map();
 const tabErrors = new Map();
 const refreshWindows = new Map();
 let refreshCanceled = false;
-let refreshState = { running: false, text: 'Refresh checks saved product links across all store carts.' };
+let refreshState = { running: false, text: '' };
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (main && !main.isDestroyed()) { if (main.isMinimized()) main.restore(); main.focus(); } });
 const cartPath = () => path.join(app.getPath('userData'), 'cart.json');
@@ -40,7 +45,7 @@ async function persist(value) {
   return true;
 }
 function tabState() {
-  return { active: activeStore, target: captureTarget, items: cart?.items.filter(i => STORES.some(s => s.id === i.store)).map(i => ({ id: i.id, name: `${i.name} · ${STORES.find(s => s.id === i.store).name}` })) || [], stores: STORES.filter(s => !closedStores.has(s.id)).map(s => {
+  return { importState, active: activeStore, target: captureTarget, items: cart?.items.filter(i => STORES.some(s => s.id === i.store)).map(i => ({ id: i.id, name: `${i.name} · ${STORES.find(s => s.id === i.store).name}` })) || [], stores: STORES.filter(s => !closedStores.has(s.id)).map(s => {
     const wc = storeViews.get(s.id)?.webContents;
     return { id: s.id, name: s.name, url: wc && !wc.isDestroyed() ? wc.getURL() : '', loading: wc && !wc.isDestroyed() ? wc.isLoading() : false, canGoBack: wc && !wc.isDestroyed() ? wc.navigationHistory.canGoBack() : false, error: tabErrors.get(s.id) || '' };
   }) };
@@ -49,7 +54,7 @@ function updateTabs() { if (storeShell && !storeShell.isDestroyed()) storeShell.
 function layoutTabs() {
   if (!storeShell || storeShell.isDestroyed()) return;
   const [width, height] = storeShell.getContentSize();
-  for (const [id, view] of storeViews) { view.setBounds({ x: 0, y: 88, width, height: Math.max(1, height - 88) }); view.setVisible(id === activeStore); }
+  for (const [id, view] of storeViews) { view.setBounds({ x: 0, y: 147, width, height: Math.max(1, height - 147) }); view.setVisible(id === activeStore); }
 }
 function ensureStoreShell() {
   if (storeShell && !storeShell.isDestroyed()) return;
@@ -124,7 +129,7 @@ function closeStoreTab(id, originalView) {
 }
 ipcMain.handle('store-tab-use-product', async (event, mode = 'main') => {
   trustedTabs(event);
-  if (listBusy) throw Error('Finish the list operation first.');
+  if (listBusy || importBusy) throw Error('Finish the current list or import operation first.');
   if (!['main', 'alternative'].includes(mode)) throw Error('Choose Use this price or Save as alternative.');
   const itemId = captureTarget, store = activeStore;
   if (!cart.items.some(i => i.id === itemId)) throw Error('Choose a cart item beside Use this price first.');
@@ -136,10 +141,119 @@ ipcMain.handle('store-tab-use-product', async (event, mode = 'main') => {
   const product = result.candidates[0];
   if (!originalView || originalView.webContents.isDestroyed() || originalView.webContents.getURL() !== result.url) throw Error('The product page changed. Try again on the intended product.');
   const asAlternative = mode === 'alternative';
-  await persist(snapshot => { if (listBusy) throw Error('The shopping list is switching. Try again on the current list.'); applyDetected(snapshot, itemId, store, result, asAlternative); });
+  await persist(snapshot => { if (listBusy || importBusy) throw Error('The shopping list is switching. Try again on the current list.'); applyDetected(snapshot, itemId, store, result, asAlternative); });
   if (!asAlternative) closeStoreTab(store, originalView);
   return { cents: product.cents, product: product.product, asAlternative, prices: result.candidates.map(p => ({ cents: p.cents, unit: p.purchaseUnit || 'package' })) };
 });
+ipcMain.handle('store-tab-add-new', async event => {
+  trustedTabs(event);
+  const store = activeStore, view = storeViews.get(store), url = view?.webContents.getURL();
+  return runImport(url, '', view?.webContents);
+});
+function sendImport(text, running = importBusy) {
+  importState = { running, text };
+  if (main && !main.isDestroyed()) main.webContents.send('import-status', importState);
+  updateTabs();
+}
+function cancelImport() {
+  importCanceled = true;
+  for (const window of importWindows.values()) if (!window.isDestroyed()) window.webContents.stop();
+}
+function importReader(store) {
+  if (importWindows.has(store)) return importWindows.get(store).webContents;
+  const window = new BrowserWindow({ show: false, width: 1200, height: 860, webPreferences: { partition: `persist:store-${store}`, nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, backgroundThrottling: false } });
+  const wc = window.webContents;
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  for (const event of ['will-navigate', 'will-redirect']) wc.on(event, (e, url) => { if (!validStoreUrl(store, url)) e.preventDefault(); });
+  wc.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  wc.session.setPermissionCheckHandler(() => false);
+  importWindows.set(store, window); return wc;
+}
+async function importNavigate(wc, url) {
+  if (importCanceled) throw Error('Import canceled.');
+  let timer;
+  try { await Promise.race([wc.loadURL(url), new Promise((_, reject) => { timer = setTimeout(() => { if (!wc.isDestroyed()) wc.stop(); reject(Error('The store page took too long to load.')); }, 18000); })]); }
+  finally { clearTimeout(timer); }
+}
+async function importRead(wc, store, wait = 5000) {
+  const deadline = Date.now() + wait; let result;
+  do {
+    if (importCanceled || wc.isDestroyed()) throw Error('Import canceled.');
+    if (!validStoreUrl(store, wc.getURL())) throw Error('Unsupported store page.');
+    result = await wc.executeJavaScript(extractScript, false);
+    if (result.accessBlocked || result.candidates?.length) return result;
+    await new Promise(resolve => setTimeout(resolve, 400));
+  } while (Date.now() < deadline);
+  return result;
+}
+async function findUpcMatch(store, upc) {
+  const wc = importReader(store);
+  await importNavigate(wc, searchUrl(store, upc));
+  let links = [], direct, result;
+  const deadline = Date.now() + 5000;
+  do {
+    if (importCanceled) throw Error('Import canceled.');
+    result = await wc.executeJavaScript(extractScript, false);
+    if (result.accessBlocked) return { note: result.reason };
+    if (result.details?.productPage) { direct = await importRead(wc, store); break; }
+    links = (await wc.executeJavaScript(searchLinksScript, false)).filter(link => { try { return sourceStore(link) === store; } catch { return false; } }).slice(0, 3);
+    if (links.length) break;
+    await new Promise(resolve => setTimeout(resolve, 400));
+  } while (Date.now() < deadline);
+  if (direct) links = [direct.url];
+  const matches = [];
+  for (const url of links) {
+    if (importCanceled) throw Error('Import canceled.');
+    if (direct?.url === url) result = direct;
+    else { await importNavigate(wc, url); result = await importRead(wc, store); }
+    if (result.accessBlocked) return { note: result.reason };
+    if (normalizeGtin(result.details?.upc) === normalizeGtin(upc) && result.candidates?.length) matches.push(result);
+  }
+  return matches.length === 1 ? { result: matches[0] } : { note: matches.length > 1 ? 'Several pages matched this UPC. Choose the correct product manually.' : 'No confirmed UPC match found. Add this store’s details manually.' };
+}
+async function runImport(url, category = '', currentWc) {
+  if (importBusy || listBusy || refreshState.running) throw Error('Finish or cancel the current operation before importing a product.');
+  const store = sourceStore(url);
+  importBusy = true; importCanceled = false;
+  let created, matched = 0, result, text;
+  sendImport('Reading product details…');
+  try {
+    try {
+      const wc = currentWc || importReader(store);
+      if (!currentWc) await importNavigate(wc, url);
+      result = await importRead(wc, store, 7000);
+      if (currentWc && currentWc.getURL() !== result.url) throw Error('The product page changed. Try again.');
+    } catch (error) {
+      if (importCanceled) throw error;
+      result = { url, candidates: [], reason: 'Could not read this product page. Fill in the saved entry manually.' };
+    }
+    if (importCanceled) throw Error('Import canceled.');
+    if (result.url && sourceStore(result.url) !== store) throw Error('The page changed to an unsupported product link.');
+    await persist(snapshot => { created = createImported(snapshot, store, result.url || url, result, category); });
+    captureTarget = created.id; updateTabs();
+    for (const target of STORES.filter(s => s.id !== store)) {
+      if (!created.upc || importCanceled) break;
+      sendImport(`Searching ${target.name} for UPC ${created.upc}…`);
+      let response;
+      try { response = await findUpcMatch(target.id, created.upc); }
+      catch { if (importCanceled) break; response = { note: 'Could not check this store. Add its details manually.' }; }
+      if (importCanceled) break;
+      await persist(snapshot => {
+        const row = snapshot.items.find(i => i.originId === created.originId && i.store === target.id);
+        if (!row || row.priceOptions.length) return;
+        if (response.result) { try { if (applyImportedMatch(snapshot, created.originId, target.id, response.result)) matched++; else row.importNote = 'Selection changed during lookup. Fill in the details manually.'; } catch (error) { row.importNote = error.message; } }
+        else row.importNote = response.note;
+      });
+    }
+    if (importCanceled && created) await persist(snapshot => { for (const row of snapshot.items.filter(i => i.originId === created.originId && !i.priceOptions.length)) row.importNote = 'Import stopped. Fill in this store’s details manually.'; });
+    text = `${importCanceled ? 'Import stopped' : 'Item added'}: ${created.name}. ${matched} other store${matched === 1 ? '' : 's'} matched by UPC. Unmatched entries are ready to fill in.`;
+    return { ...created, matched, message: text };
+  } catch (error) { text = created ? 'Import stopped. The added item remains saved.' : error.message; throw error; }
+  finally {
+    for (const window of importWindows.values()) if (!window.isDestroyed()) window.destroy();
+    importWindows.clear(); importBusy = false; sendImport(text || 'Import stopped.', false);
+  }
+}
 function selectedQuery(itemId, choiceId) {
   const item = cart.items.find(i => i.id === itemId);
   if (!item) throw Error('Choose a cart item.');
@@ -152,7 +266,7 @@ async function searchStores(query, itemId, choiceId) {
   // Validate every destination before creating views, then start all active
   // navigations without waiting for the other stores to finish.
   const destinations = STORES.map(store => ({ ...store, url: searchUrl(store.id, query) }));
-  if (itemId) setCaptureTarget(itemId);
+  setCaptureTarget(itemId || null);
   closedStores.clear();
   for (const store of destinations) {
     const wc = storeView(store.id, false).webContents;
@@ -249,7 +363,7 @@ async function runPriceRefresh(mode = 'prices') {
   }
 }
 async function listAction(action, name) {
-  if (listBusy || refreshState.running) throw Error('Finish or cancel the current operation before switching or saving lists.');
+  if (listBusy || refreshState.running || importBusy) throw Error('Finish or cancel the current operation before switching or saving lists.');
   listBusy = true;
   try {
     await writeQueue;
@@ -279,7 +393,7 @@ async function listAction(action, name) {
     captureTarget = null;
     if (storeShell && !storeShell.isDestroyed()) storeShell.close();
     await persist(next); listFile = file;
-    refreshState = { running: false, text: 'Refresh checks saved product links across all store carts.' }; sendRefresh();
+    refreshState = { running: false, text: '' }; sendRefresh(); sendImport('', false);
     return { replaced: true, backup, message: action === 'new' ? 'New list ready. Previous working list backed up.' : 'Shopping list loaded. Previous working list backed up.' };
   } finally { listBusy = false; }
 }
@@ -301,28 +415,30 @@ app.whenReady().then(async () => {
     if (error.code !== 'ENOENT') { loadError = true; await fs.copyFile(cartPath(), cartPath() + '.backup-' + Date.now()).catch(() => {}); }
   }
   main = new BrowserWindow({ width: 1360, height: 930, minWidth: 980, minHeight: 700, backgroundColor: '#f4f5ef', title: 'Grocery Tracker', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
-  main.on('closed', () => { cancelPriceRefresh(); for (const window of refreshWindows.values()) if (!window.isDestroyed()) window.destroy(); if (storeShell && !storeShell.isDestroyed()) storeShell.close(); });
+  main.on('closed', () => { cancelImport(); for (const window of importWindows.values()) if (!window.isDestroyed()) window.destroy(); cancelPriceRefresh(); for (const window of refreshWindows.values()) if (!window.isDestroyed()) window.destroy(); if (storeShell && !storeShell.isDestroyed()) storeShell.close(); });
   Menu.setApplicationMenu(null);
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', event => event.preventDefault());
   handle('list-file', listAction);
-  handle('load', () => ({ cart, version: app.getVersion(), loadError, refreshState }));
-  handle('refresh-thumbnails', () => { if (refreshState.running || listBusy) return false; runPriceRefresh('thumbnails').catch(() => {}); return true; });
+  handle('import-product', (url, category) => runImport(url, category));
+  handle('cancel-import', () => { cancelImport(); return true; });
+  handle('load', () => ({ cart, version: app.getVersion(), loadError, refreshState, importState }));
+  handle('refresh-thumbnails', () => { if (refreshState.running || listBusy || importBusy) return false; runPriceRefresh('thumbnails').catch(() => {}); return true; });
   handle('empty-carts', async () => {
-    if (listBusy) throw Error('Finish the list operation first.');
+    if (listBusy || importBusy) throw Error('Finish the current list or import operation first.');
     if (refreshState.running) throw Error('Wait for the refresh to finish or cancel it before emptying carts.');
     const result = await dialog.showMessageBox(main, { type: 'warning', buttons: ['Keep carts', 'Empty all carts'], defaultId: 0, cancelId: 0, title: 'Empty all carts?', message: 'Remove every item from all three store carts?', detail: 'Saved products, alternatives, quantities, prices and thumbnails will be removed. This cannot be undone.' });
     if (result.response !== 1) return false;
     await persist(snapshot => applyChange(snapshot, { type: 'empty-carts' })); return true;
   });
-  handle('refresh-prices', () => { if (refreshState.running || listBusy) return false; runPriceRefresh().catch(() => {}); return true; });
+  handle('refresh-prices', () => { if (refreshState.running || listBusy || importBusy) return false; runPriceRefresh().catch(() => {}); return true; });
   handle('cancel-price-refresh', () => { cancelPriceRefresh(); return true; });
   handle('stores', () => STORES.map(({ id, name }) => ({ id, name })));
   handle('cart-view', (selectedStore, comparisons) => {
     if (selectedStore !== 'all' && !STORES.some(s => s.id === selectedStore)) throw Error('Choose a store cart or All carts.');
     return cartView(cart, STORES.map(s => s.id), selectedStore, comparisons);
   });
-  handle('change', change => { if (listBusy) throw Error('Finish the list operation first.'); return persist(snapshot => applyChange(snapshot, change)); });
+  handle('change', change => { if (listBusy) throw Error('Finish the current list or import operation first.'); return persist(snapshot => applyChange(snapshot, change)); });
   handle('open-store', id => { const wc = storeView(id).webContents; if (!wc.getURL()) wc.loadURL(STORES.find(s => s.id === id).home).catch(() => {}); return true; });
   handle('search-stores', searchStores);
   handle('search-store', searchStore);

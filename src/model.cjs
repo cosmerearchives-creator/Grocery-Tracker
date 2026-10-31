@@ -72,6 +72,8 @@ function validateCart(cart) {
   for (const item of cart.items) {
     if (!item || typeof item.id !== 'string' || seen.has(item.id) || typeof item.originId !== 'string' || !KNOWN_STORES.some(s => s.id === item.store) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || !Number.isInteger(item.quantity) || item.quantity < 0 || item.quantity > 999 || !['exact', 'equivalent'].includes(item.match) || typeof item.available !== 'boolean') throw Error('Invalid cart item.');
     if (item.category !== undefined && (typeof item.category !== 'string' || item.category.length > 60 || /[\r\n]/.test(item.category))) throw Error('Use a category of up to 60 characters.');
+    if (item.pendingUrl && !validStoreUrl(item.store, item.pendingUrl)) throw Error('Invalid pending store link.');
+    for (const field of ['importNote', 'barcodeNote', 'retailerUpc']) if (item[field] !== undefined && (typeof item[field] !== 'string' || item[field].length > 500)) throw Error('Invalid imported product detail.');
     seen.add(item.id); validateSearchDetails(item);
     for (const key of ['brand', 'size']) if (typeof item[key] !== 'string' || item[key].length > 200) throw Error('Invalid product details.');
     if (!Array.isArray(item.priceOptions) || item.priceOptions.length > 50) throw Error('Use up to 50 saved options per store item.');

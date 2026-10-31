@@ -1,7 +1,9 @@
 /* global storeTabs */
 const tabs = document.getElementById('tabs');
 let detecting = false;
+let importing = false;
 function render(state) {
+  importing = !!state.importState?.running;
   tabs.replaceChildren();
   for (const store of state.stores) {
     const button = document.createElement('button'); button.textContent = store.name + (store.loading ? ' · loading' : ''); button.setAttribute('role', 'tab'); button.setAttribute('aria-selected', String(state.active === store.id));
@@ -14,11 +16,12 @@ function render(state) {
   target.replaceChildren(new Option('Choose cart item…', ''));
   for (const item of state.items) target.append(new Option(item.name, item.id));
   target.value = state.target || '';
-  document.getElementById('use-product').disabled = detecting || !state.target || !current;
-  document.getElementById('save-alternative').disabled = detecting || !state.target || !current;
+  document.getElementById('use-product').disabled = detecting || importing || !state.target || !current;
+  document.getElementById('save-alternative').disabled = detecting || importing || !state.target || !current;
+  document.getElementById('add-new').disabled = detecting || importing || !current;
   document.getElementById('reload').disabled = !current;
   document.getElementById('done').hidden = state.stores.length > 0;
-  if (!detecting) document.getElementById('status').textContent = current?.error || 'Choose Marion, Ohio in each store.';
+  if (importing || !detecting) document.getElementById('status').textContent = state.importState?.text || current?.error || 'Choose Marion, Ohio in each store.';
 }
 function showError(error) { document.getElementById('status').textContent = error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''); }
 document.getElementById('back').onclick = () => storeTabs.navigate('back').catch(showError);
@@ -35,6 +38,14 @@ async function saveProduct(mode) {
   } catch (error) { showError(error); }
   finally { detecting = false; const disabled = !document.getElementById('target').value || !tabs.children.length; document.getElementById('use-product').disabled = disabled; document.getElementById('save-alternative').disabled = disabled; }
 }
+document.getElementById('add-new').onclick = async () => {
+  detecting = true; document.getElementById('add-new').disabled = true;
+  document.getElementById('status').textContent = 'Reading product details…';
+  let failure;
+  try { const result = await storeTabs.addNew(); document.getElementById('status').textContent = result.message; } catch (error) { failure = error; showError(error); }
+  finally { detecting = false; try { render(await storeTabs.state()); if (failure) showError(failure); } catch (error) { showError(error); } }
+};
+
 document.getElementById('use-product').onclick = () => saveProduct('main');
 document.getElementById('save-alternative').onclick = () => saveProduct('alternative');
 storeTabs.onState(render); storeTabs.state().then(render).catch(showError);

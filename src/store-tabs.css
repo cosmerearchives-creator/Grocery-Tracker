@@ -3,3 +3,5 @@
 #done{padding:40px;text-align:center;font-size:16px;color:#55704c}#done[hidden]{display:none}
 
 #save-alternative{background:#eef4df;border-color:#aebf94;white-space:nowrap}#status{max-width:190px}#target{max-width:165px}
+
+.toolbar{height:104px;display:grid;grid-template-rows:26px 30px 20px;gap:4px;align-content:center}.address-row,.capture-row{display:flex;align-items:center;gap:8px;min-width:0}.address-row button{padding:4px 12px}.capture-row #target{flex:1;max-width:300px;min-width:120px}.capture-row button{white-space:nowrap}#add-new{background:#28583e;color:white;margin-left:auto}#status{max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

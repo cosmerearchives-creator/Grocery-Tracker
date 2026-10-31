@@ -184,4 +184,55 @@ function extractThumbnail(result) {
   }
   return { ...result, thumbnail, imageProduct: title };
 }
-module.exports = { extractProduct, extractThumbnail, extractScript: `(${extractThumbnail.toString()})((${extractProduct.toString()})())` };
+function extractDetails(result, normalizeGtin) {
+  if (result.accessBlocked) return result;
+  const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const visible = node => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
+  const heading = [...document.querySelectorAll('h1')].find(visible);
+  const name = clean(heading?.textContent || result.imageProduct).slice(0, 200);
+  const path = new URL(location.href).pathname;
+  const productPage = /\/(?:product|products|p)\//.test(path);
+  if (!productPage) return { ...result, details: { productPage: false } };
+  const codes = new Set();
+  const products = [];
+  const visit = (value, depth = 0) => {
+    if (!value || typeof value !== 'object' || depth > 12 || products.length > 80) return;
+    if (Array.isArray(value)) { value.slice(0, 100).forEach(v => visit(v, depth + 1)); return; }
+    if ([].concat(value['@type'] || []).includes('Product') && clean(value.name).toLowerCase() === name.toLowerCase()) products.push(value);
+    for (const [key, child] of Object.entries(value)) if (!['review', 'offers', 'aggregateRating'].includes(key)) visit(child, depth + 1);
+  };
+  for (const script of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 30)) if (script.textContent.length < 2000000) { try { visit(JSON.parse(script.textContent)); } catch {} }
+  for (const product of products) for (const key of ['gtin', 'gtin8', 'gtin12', 'gtin13', 'gtin14']) if (typeof product[key] === 'string' && normalizeGtin(product[key])) codes.add(product[key].replace(/[\s-]/g, ''));
+  const labels = [...document.querySelectorAll('main p, main li, main dd, main span, [itemprop="gtin12"], [itemprop="gtin13"], [itemprop="gtin14"]')].filter(n => visible(n) && n.children.length < 3 && n.textContent.length < 100);
+  const raw = new Set();
+  for (const label of labels) {
+    const match = clean(label.textContent).match(/^(?:UPC(?:-A)?|GTIN(?:-?\d+)?|EAN)\s*:?\s*#?\s*([\d -]{8,22})$/i);
+    const value = match ? match[1].replace(/[ -]/g, '') : label.getAttribute('itemprop')?.startsWith('gtin') ? label.getAttribute('content') || clean(label.textContent) : '';
+    if (value) { raw.add(value); if (normalizeGtin(value)) codes.add(value); }
+  }
+  let retailerUpc = raw.size === 1 ? [...raw][0] : '', upcNote = '';
+  // Meijer labels a shortened reorder code as UPC. Complete it only when the
+  // checksum-valid barcode in the primary product image independently agrees.
+  if (retailerUpc && /^\d{9,11}$/.test(retailerUpc) && /(^|\.)meijer\.com$/.test(new URL(location.href).hostname)) {
+    const imageCode = result.thumbnail?.match(/\/(\d{12,14})(?:_|\.)/)?.[1];
+    const base = retailerUpc.padStart(11, '0');
+    const completed = Array.from({ length: 10 }, (_, digit) => base + digit).find(code => normalizeGtin(code));
+    if (imageCode && normalizeGtin(imageCode) && normalizeGtin(imageCode) === normalizeGtin(completed)) { codes.add(completed); upcNote = 'Full UPC verified against the main product image; Meijer displays a shortened code.'; }
+  }
+  const normalized = new Set([...codes].map(normalizeGtin));
+  const upc = normalized.size === 1 ? [...codes][0] : '';
+  const sizes = [...new Set(products.map(p => clean(p.size?.name || p.size || p.weight?.name)).filter(v => v && v !== '[object Object]'))];
+  const size = (sizes.length === 1 ? sizes[0] : name.match(/\b\d+(?:\.\d+)?\s*(?:fl\.?\s*oz|oz|ounces?|lb|lbs|pounds?|gal|gallons?|ml|liters?|litres?|ct|count|pack)\b/i)?.[0] || '').slice(0, 200);
+  return { ...result, details: { name, size, quantity: 1, upc, retailerUpc, upcNote, productPage } };
+}
+function extractSearchLinks() {
+  const links = new Set();
+  for (const node of document.querySelectorAll('a[href]')) {
+    if (!node.getClientRects().length) continue;
+    try { const url = new URL(node.getAttribute('href'), location.href); if (url.protocol === 'https:' && /\/(?:product|products|p)\//.test(url.pathname)) { url.hash = ''; links.add(url.href); } } catch {}
+    if (links.size >= 12) break;
+  }
+  return [...links];
+}
+const { normalizeGtin } = require('./barcode.cjs');
+module.exports = { extractProduct, extractThumbnail, extractDetails, extractSearchLinks, searchLinksScript: `(${extractSearchLinks.toString()})()`, extractScript: `(${extractDetails.toString()})((${extractThumbnail.toString()})((${extractProduct.toString()})()), (${normalizeGtin.toString()}))` };

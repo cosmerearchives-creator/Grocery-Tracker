@@ -6,7 +6,15 @@ A Windows grocery planner for Meijer, ALDI, and Gordon Food Service in Marion, O
 
 Download the `.exe` from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). This preview is unsigned, so Windows may display an unknown-publisher message.
 
-## Version 0.9.0
+## Version 0.10.0
+
+- **Add from link.** Paste a supported store product URL to create linked entries in all three carts at quantity one. The app fills in the name, package size, price, thumbnail and UPC when readable. Missing prices or unreadable pages still produce entries ready for manual completion, with the source link retained. Imported prices carry Needs review. Package size/count stays separate from shopping quantity; GFS case options retain their own zero starting quantity.
+- **Verified UPC lookup.** If a checksum-valid barcode is found, the app searches the other stores and checks up to three visible product links per store. It fills an entry only when exactly one checked product page confirms the same UPC/GTIN (including equivalent leading-zero padding). Similar names, missing barcodes and ambiguous results do not count as matches. Blocked or unmatched stores keep their entries and a status explaining what needs filling in. Progress and cancellation are included; cancel retains items already added. Existing manual edits made during matching are preserved. List switching and other batch operations wait until import finishes or is canceled.
+- **Meijer shortened codes.** The supplied Meijer cheese page displays `71928313546`. Its main product image independently identifies the full UPC `719283135469`; the reader completes this kind of shortened Meijer code only when the checksum-valid image barcode confirms it. Both the displayed code and the verified full code are retained. A live check confirmed this page’s name, 8 oz size, price, thumbnail and full UPC. This does not guarantee another store carries a Meijer-branded product.
+- **Search for Items.** Enter a name or UPC to open all three store searches without an existing cart item. In the store toolbar, Add as new item imports the current product through the same link-import process. Store pages stay open so browsing can continue. Use this price and Save as alternative still work for an existing selected item. Automatic matching uses separate readers with existing store sessions and does not navigate the visible store pages.
+- **Compact cart controls.** Removed the static refresh explanation and view-description text. Empty all carts and Show comparisons share the refresh toolbar. The cart starts below a sidebar-green divider with centered Your shopping cart text. Refresh/import progress is shown only when there is an operation to report.
+
+### Sidebar navigation
 
 - **Sidebar carts and totals.** Meijer, ALDI, Gordon Food Service and Total are four clickable sidebar buttons. The first three show the chosen store’s cart; Total opens All carts with comparisons enabled and shows the combined known subtotal. Amounts update when quantities, prices or availability change. The selected cart is highlighted. Selection, price-coverage and review details remain available in the store button’s tooltip.
 - **Simpler main area.** Removed the large dashboard store-summary cards and the “Your products, your quantities” instruction banner. List name / New / Save / Load now sit in the header between the introduction and checklist export controls. The duplicate cart tabs in the main area are removed. Store websites and sign-in remain available in an expandable sidebar section. The sidebar scrolls when necessary, and the header adapts to smaller windows.
@@ -73,7 +81,7 @@ The app automatically upgrades old shared or independent-store lists. Previously
 
 ## Limits
 
-Online prices are estimates, not guaranteed Marion shelf prices. No invented prices are supplied. Unpriced items stay out of known subtotals and are marked missing. Prices exclude taxes and conditional coupons. Automatic cross-store product matching, unit-price normalization, scheduled price refresh, and loyalty-coupon calculation are not implemented. Exact/equivalent matching preferences are stored as guidance for selecting products.
+Online prices are estimates, not guaranteed Marion shelf prices. No invented prices are supplied. Unpriced items stay out of known subtotals and are marked missing. Prices exclude taxes and conditional coupons. Automatic cross-store matching is limited to confirmed UPC/GTIN matches during link imports. General name/brand matching, unit-price normalization, scheduled price refresh, and loyalty-coupon calculation are not implemented. Exact/equivalent matching preferences are stored as guidance for selecting products.
 
 Refresh is a manual batch check, not a guarantee that every website can be read. Retailers may require sign-in or reject background requests. Open the store tab to sign in, or try later; unreadable prices stay saved and flagged. Manually named products whose names do not match the linked product/version need review before an automatic price replacement. Exported selected products with failed checks are labeled PRICE NOT REFRESHED.
 
@@ -108,6 +116,8 @@ The v0.9 UI checks cover all four sidebar navigation buttons, live store and com
 The v0.8.1 checks cover Gordon purchase-panel isolation, independent single/case quantities and totals, case-only to dual-option updates, refresh matching and missing-option retention, alternative saving, and both toolbar/manual lookup flows.
 
 The v0.8 checks cover full saved-file round trips, two independent list files, older-format loading, invalid/oversized file rejection, cancellation and working-list backup recovery, category grouping and linked-store edits, removed controls, and restart persistence.
+
+The v0.10 checks cover checksum and leading-zero barcode handling, Meijer shortened-code verification, source-link details and placeholders, exact/false/ambiguous cross-store matches, imports from the current browser page without a selected item, cancellation, blocked/no-UPC pages, preservation of browser tabs, and compact main/store toolbar layouts. The live Meijer source reader was verified; cross-store success/failure scenarios were checked with controlled store-page fixtures, not claimed as guaranteed live matches.
 
 ## Far future
 

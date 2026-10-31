@@ -4,6 +4,7 @@ let cart, stores = [], editing, pending = 0;
 let notificationTimer;
 let listOperation = false;
 let refreshRunning = false;
+let importRunning = false;
 let groupCategories = localStorage.getItem('group-categories') !== 'false';
 const defaultCategories = ['Fruit', 'Vegetables', 'Dairy', 'Meat', 'Seafood', 'Bakery', 'Frozen', 'Pantry', 'Drinks', 'Household', 'Other'];
 const expandedAlternatives = new Set();
@@ -28,11 +29,12 @@ function selectStore(id) {
 function showRefresh(state) {
   refreshRunning = state.running;
   listButtons();
-  $('refresh-prices').disabled = state.running || listOperation;
-  $('refresh-thumbnails').disabled = state.running || listOperation;
-  $('empty-carts').disabled = state.running || listOperation;
+  $('refresh-prices').disabled = state.running || listOperation || importRunning;
+  $('refresh-thumbnails').disabled = state.running || listOperation || importRunning;
+  $('empty-carts').disabled = state.running || listOperation || importRunning;
   $('cancel-refresh').hidden = !state.running;
-  $('refresh-status').textContent = state.text;
+  $('add-link').disabled = state.running || listOperation || importRunning;
+  $('refresh-status').textContent = state.text; $('refresh-status').hidden = !state.text;
 }
 function summary(id) {
   const items = cart.items.filter(i => i.store === id);
@@ -69,7 +71,6 @@ async function render() {
   $('group-categories').checked = groupCategories;
   $('category-choices').replaceChildren(...[...new Set([...defaultCategories, ...cart.items.map(i => i.category).filter(Boolean)])].sort().map(name => { const option = el('option'); option.value = name; return option; }));
   $('show-comparisons').checked = view.compare; $('show-comparisons').disabled = selectedStore === 'all';
-  $('view-description').textContent = selectedStore === 'all' ? 'Items from every store cart, grouped once with all store options. Comparisons are always on here.' : view.compare ? 'Items from this store’s cart, with other store options shown for comparison.' : 'Only this store’s items and product options are shown.';
   $('count').textContent = items.length;
   $('cart-title').textContent = selectedStore === 'all' ? 'All carts' : (stores.find(s => s.id === selectedStore)?.name || '') + ' cart';
   $('empty').hidden = !!items.length; $('items').replaceChildren();
@@ -79,6 +80,7 @@ async function render() {
     const row = el('article', undefined, 'item'); row.dataset.itemId = item.id;
     const top = el('div', undefined, 'item-top'), detail = el('div', undefined, 'item-detail');
     detail.append(el('h3', item.name));
+    if (item.upc || item.retailerUpc) { const code = el('p', 'UPC: ' + (item.upc || item.retailerUpc), 'barcode-details'); code.title = item.barcodeNote || ''; detail.append(code); }
     if (selectedStore === 'all') detail.append(el('p', 'In: ' + stores.filter(s => cart.items.some(i => i.originId === item.originId && i.store === s.id)).map(s => s.name).join(' · '), 'source'));
     const prefs = el('div', undefined, 'preferences');
     const size = el('input'); size.value = item.size; size.maxLength = 200; size.placeholder = 'Size / variety'; size.setAttribute('aria-label', `${item.name}: size or variety`);
@@ -98,6 +100,7 @@ async function render() {
       const block = el('div', undefined, 'store-option'); block.dataset.store = store.id;
       const unavailable = related?.available === false;
       block.append(el('div', store.name, 'store-option-title'));
+      if (related?.importNote && !related.priceOptions.length) block.append(el('div', related.importNote, 'import-note'));
       if (unavailable) block.append(el('span', 'Not available at this store', 'unavailable-badge'));
       const primaryIndex = related?.priceOptions.findIndex(o => !o.isAlternative) ?? -1;
       if (primaryIndex >= 0) block.append(productCard(related, related.priceOptions[primaryIndex], primaryIndex, store));
@@ -181,7 +184,7 @@ function openPrice(item, store = item.store, index) {
   editing.thumbnail = offer?.thumbnail || '';
   $('offer-product').value = offer?.product || `${item.name} — ${item.size}`;
   $('offer-price').value = offer ? (offer.cents / 100).toFixed(2) : ''; $('offer-packs').value = offer?.packs || 1;
-  $('offer-source').value = offer?.source || 'manual'; $('offer-url').value = offer?.url || '';
+  $('offer-source').value = offer?.source || 'manual'; $('offer-url').value = offer?.url || item.pendingUrl || '';
   $('offer-confirm').checked = false; $('lookup-status').textContent = ''; $('delete-offer').disabled = !offer;
   if (!$('price-dialog').open) $('price-dialog').showModal();
 }
@@ -190,7 +193,7 @@ $('add-form').onsubmit = async event => {
   try { await change({ type: 'add-all', name, category: $('new-category').value, size: $('new-size').value, match: $('new-match').value, upc: $('new-upc').value.trim(), alternatives: parseAlternatives($('new-alternatives').value) }); $('new-name').value = ''; $('new-category').value = ''; $('new-size').value = ''; $('new-upc').value = ''; $('new-alternatives').value = ''; $('new-name').focus(); } catch {}
 };
 function listButtons() {
-  for (const id of ['new-list', 'save-list', 'load-list', 'list-name']) $(id).disabled = listOperation || refreshRunning;
+  for (const id of ['new-list', 'save-list', 'load-list', 'list-name']) $(id).disabled = listOperation || refreshRunning || importRunning;
 }
 async function listFile(action, name) {
   if (listOperation) return;
@@ -203,6 +206,23 @@ async function listFile(action, name) {
   } catch (e) { message(e.message); }
   finally { listOperation = false; listButtons(); $('refresh-prices').disabled = refreshRunning; $('refresh-thumbnails').disabled = refreshRunning; $('empty-carts').disabled = refreshRunning; }
 }
+function showImport(state) {
+  importRunning = !!state.running; listButtons();
+  $('import-status').textContent = state.text || ''; $('import-status').hidden = !state.text;
+  $('cancel-import').hidden = !importRunning;
+  for (const id of ['add-link', 'search-items', 'refresh-prices', 'refresh-thumbnails', 'empty-carts']) $(id).disabled = importRunning || refreshRunning || listOperation;
+}
+$('add-link').onclick = () => { $('import-url').value = ''; $('import-category').value = ''; $('import-dialog').showModal(); };
+$('cancel-link').onclick = () => $('import-dialog').close();
+$('import-form').onsubmit = async event => {
+  event.preventDefault(); const url = $('import-url').value.trim(), category = $('import-category').value.trim(); $('import-dialog').close();
+  try { const result = await grocery.importProduct(url, category); message(result.message); } catch (e) { message(e.message); }
+};
+$('cancel-import').onclick = () => grocery.cancelImport().catch(e => message(e.message));
+$('search-items').onclick = () => { $('browse-query').value = ''; $('browse-dialog').showModal(); };
+$('cancel-browse').onclick = () => $('browse-dialog').close();
+$('browse-form').onsubmit = async event => { event.preventDefault(); try { await grocery.searchStores($('browse-query').value.trim()); $('browse-dialog').close(); } catch (e) { message(e.message); } };
+grocery.onImport(showImport);
 $('list-name').onchange = () => change({ type: 'list-name', name: $('list-name').value.trim() || 'Untitled list' }).catch(() => {});
 $('new-list').onclick = () => { $('new-list-name').value = ''; $('new-list-dialog').showModal(); };
 $('cancel-new-list').onclick = () => $('new-list-dialog').close();
@@ -252,6 +272,6 @@ Promise.all([grocery.load(), grocery.stores()]).then(([data, list]) => {
   cart = data.cart; stores = list; if (selectedStore !== 'all' && !stores.some(s => s.id === selectedStore)) selectedStore = 'meijer'; $('version').textContent = 'VERSION ' + data.version;
   for (const store of stores) for (const id of ['export-store']) { const option = el('option', store.name); option.value = store.id; $(id).append(option); }
   $('export-store').value = selectedStore === 'all' ? stores[0].id : selectedStore; render();
-  showRefresh(data.refreshState);
+  showRefresh(data.refreshState); showImport(data.importState || {});
   if (data.loadError) message('Your previous cart could not be read. A backup was preserved locally.');
 }).catch(e => message('Could not load your cart: ' + e.message));

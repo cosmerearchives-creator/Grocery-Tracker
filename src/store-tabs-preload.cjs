@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('storeTabs', {
+  addNew: () => ipcRenderer.invoke('store-tab-add-new'),
   state: () => ipcRenderer.invoke('store-tabs-state'),
   select: id => ipcRenderer.invoke('store-tab-select', id),
   navigate: action => ipcRenderer.invoke('store-tab-navigate', action),
