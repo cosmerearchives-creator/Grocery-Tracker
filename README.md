@@ -6,7 +6,13 @@ A Windows grocery planner for Meijer, ALDI, and Gordon Food Service in Marion, O
 
 Download the `.exe` from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). This preview is unsigned, so Windows may display an unknown-publisher message.
 
-## Version 0.10.0
+## Version 0.11.0
+
+- **Compact shopping workspace.** Matches the approved finished-layout reference: Empty all carts sits beside Store carts in the sidebar. Add from link, Search for Items, Group by category, the category hint and Show comparisons share one compact control row immediately under the green divider. The large selected-cart heading/count, visible autosave status, manual-add form and optional-UPC/alternative creation section are removed from the main workspace. New items enter through links or store searches; existing store product details can still be entered and edited manually.
+- **Inline item headers.** Item name, category editor and Search all 3 stores sit together in a compact row. Removed the store-membership line and size/match preference controls. Existing sizes, match preferences, barcodes, product prices and quantities remain saved; readable imported UPCs still appear as a small secondary detail. Removing a store’s item is available below that store’s product options.
+- **Refresh access.** Price and thumbnail refresh controls are retained inside the existing collapsed Store websites / sign in sidebar section, without taking up a separate row above the cart. Saved-list controls, exports, product alternatives, availability controls and sign-in sessions are retained. Smaller windows wrap controls and preserve a two-line introduction. Cart selection and save status remain available to screen readers without duplicate visible headings.
+
+### Links and UPC matching
 
 - **Add from link.** Paste a supported store product URL to create linked entries in all three carts at quantity one. The app fills in the name, package size, price, thumbnail and UPC when readable. Missing prices or unreadable pages still produce entries ready for manual completion, with the source link retained. Imported prices carry Needs review. Package size/count stays separate from shopping quantity; GFS case options retain their own zero starting quantity.
 - **Verified UPC lookup.** If a checksum-valid barcode is found, the app searches the other stores and checks up to three visible product links per store. It fills an entry only when exactly one checked product page confirms the same UPC/GTIN (including equivalent leading-zero padding). Similar names, missing barcodes and ambiguous results do not count as matches. Blocked or unmatched stores keep their entries and a status explaining what needs filling in. Progress and cancellation are included; cancel retains items already added. Existing manual edits made during matching are preserved. List switching and other batch operations wait until import finishes or is canceled.
@@ -118,6 +124,8 @@ The v0.8.1 checks cover Gordon purchase-panel isolation, independent single/case
 The v0.8 checks cover full saved-file round trips, two independent list files, older-format loading, invalid/oversized file rejection, cancellation and working-list backup recovery, category grouping and linked-store edits, removed controls, and restart persistence.
 
 The v0.10 checks cover checksum and leading-zero barcode handling, Meijer shortened-code verification, source-link details and placeholders, exact/false/ambiguous cross-store matches, imports from the current browser page without a selected item, cancellation, blocked/no-UPC pages, preservation of browser tabs, and compact main/store toolbar layouts. The live Meijer source reader was verified; cross-store success/failure scenarios were checked with controlled store-page fixtures, not claimed as guaranteed live matches.
+
+The v0.11 UI checks cover the compact control row, sidebar Empty/refresh placement, removed manual/additional heading elements, inline item controls, comparison/grouping changes, quantities and alternative totals, link/search dialogs, empty-cart confirmation/cancellation, New list, and smaller-window layout.
 
 ## Far future
 

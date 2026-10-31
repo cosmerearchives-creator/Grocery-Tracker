@@ -78,22 +78,14 @@ async function render() {
   for (const item of items) {
     if (groupCategories && categoryName(item) !== lastCategory) { lastCategory = categoryName(item); $('items').append(el('h3', lastCategory, 'category-heading')); }
     const row = el('article', undefined, 'item'); row.dataset.itemId = item.id;
-    const top = el('div', undefined, 'item-top'), detail = el('div', undefined, 'item-detail');
-    detail.append(el('h3', item.name));
-    if (item.upc || item.retailerUpc) { const code = el('p', 'UPC: ' + (item.upc || item.retailerUpc), 'barcode-details'); code.title = item.barcodeNote || ''; detail.append(code); }
-    if (selectedStore === 'all') detail.append(el('p', 'In: ' + stores.filter(s => cart.items.some(i => i.originId === item.originId && i.store === s.id)).map(s => s.name).join(' · '), 'source'));
-    const prefs = el('div', undefined, 'preferences');
-    const size = el('input'); size.value = item.size; size.maxLength = 200; size.placeholder = 'Size / variety'; size.setAttribute('aria-label', `${item.name}: size or variety`);
-    const match = el('select'); for (const [value, label] of [['exact', 'Exact brand'], ['equivalent', 'Any comparable brand']]) { const o = el('option', label); o.value = value; match.append(o); } match.value = item.match; match.setAttribute('aria-label', `${item.name}: match preference`);
-    const updateDetails = () => change({ type: 'details', id: item.id, size: size.value.trim(), match: match.value }).catch(() => {});
-    size.onchange = updateDetails; match.onchange = updateDetails; prefs.append(size, match); if (selectedStore !== 'all') detail.append(prefs);
+    const top = el('div', undefined, 'item-top');
+    top.append(el('h3', item.name));
     const category = el('input'); category.value = item.category || ''; category.maxLength = 60; category.placeholder = 'Uncategorized'; category.setAttribute('list', 'category-choices'); category.setAttribute('aria-label', `${item.name}: category`); category.className = 'item-category';
     category.onchange = () => change({ type: 'category', id: item.id, category: category.value }).catch(() => {});
-    const label = el('label', 'Category', 'category-label'); label.append(category); detail.append(label);
+    const label = el('label', 'Category', 'category-label'); label.append(category);
     const search = button('Search all 3 stores ↗', () => grocery.searchStores('', item.id, item.upc ? 'upc-0' : 'name-0'), 'search-stores');
-    top.append(detail, search);
-    if (selectedStore !== 'all') top.append(button('Remove', () => change({ type: 'remove', id: item.id }), 'remove'));
-    row.append(top);
+    top.append(label, search); row.append(top);
+    if (item.upc || item.retailerUpc) { const code = el('p', 'UPC: ' + (item.upc || item.retailerUpc), 'barcode-details'); code.title = item.barcodeNote || ''; row.append(code); }
     const options = el('div', undefined, 'offer-grid' + (view.compare ? '' : ' single-store'));
     for (const store of stores.filter(s => view.storeIds.includes(s.id))) {
       const related = cart.items.find(i => i.originId === item.originId && i.store === store.id);
@@ -123,7 +115,7 @@ async function render() {
       }
       const selectedTotal = unavailable ? 0 : (related?.priceOptions || []).reduce((n, o) => n + o.cents * o.packs * o.quantity, 0);
       block.append(el('p', `Selected here: ${format(selectedTotal)}`, 'selection-total'), button('Search this store ↗', () => grocery.searchStore(store.id, item.id, item.upc ? 'upc-0' : 'name-0'), 'search-this-store'), button(unavailable ? 'Clear not available' : 'Not available at this store', () => change({ type: 'availability', id: item.id, store: store.id, available: unavailable }), 'availability-toggle'));
-      if (selectedStore === 'all' && related) block.append(button('Remove from this cart', () => change({ type: 'remove', id: related.id }), 'remove'));
+      if (related) block.append(button('Remove from this cart', () => change({ type: 'remove', id: related.id }), 'remove'));
       options.append(block);
     }
     row.append(options); $('items').append(row);
@@ -169,13 +161,6 @@ function productCard(item, quote, index, store) {
   card.insertBefore(metadata, card.querySelector('.review-badge'));
   return card;
 }
-function parseAlternatives(text) {
-  return text.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
-    const [name, upc = '', ...extra] = line.split('|').map(part => part.trim());
-    if (extra.length) throw Error('Use one alternative per line: product name | optional UPC.');
-    return { name, upc };
-  });
-}
 function openPrice(item, store = item.store, index) {
   editing = { id: item.id, store, index };
   grocery.setCaptureTarget(item.id).catch(e => message(e.message));
@@ -188,10 +173,6 @@ function openPrice(item, store = item.store, index) {
   $('offer-confirm').checked = false; $('lookup-status').textContent = ''; $('delete-offer').disabled = !offer;
   if (!$('price-dialog').open) $('price-dialog').showModal();
 }
-$('add-form').onsubmit = async event => {
-  event.preventDefault(); const name = $('new-name').value.trim(); if (!name) return;
-  try { await change({ type: 'add-all', name, category: $('new-category').value, size: $('new-size').value, match: $('new-match').value, upc: $('new-upc').value.trim(), alternatives: parseAlternatives($('new-alternatives').value) }); $('new-name').value = ''; $('new-category').value = ''; $('new-size').value = ''; $('new-upc').value = ''; $('new-alternatives').value = ''; $('new-name').focus(); } catch {}
-};
 function listButtons() {
   for (const id of ['new-list', 'save-list', 'load-list', 'list-name']) $(id).disabled = listOperation || refreshRunning || importRunning;
 }
@@ -201,7 +182,7 @@ async function listFile(action, name) {
   $('refresh-prices').disabled = true; $('refresh-thumbnails').disabled = true; $('empty-carts').disabled = true;
   try {
     const result = await grocery.listFile(action, name);
-    if (result.replaced) { editing = null; expandedAlternatives.clear(); $('price-dialog').close(); $('thumbnail-dialog').close(); $('add-form').reset(); }
+    if (result.replaced) { editing = null; expandedAlternatives.clear(); $('price-dialog').close(); $('thumbnail-dialog').close(); $('import-form').reset(); $('browse-form').reset(); }
     if (result.message) { $('list-status').textContent = result.message + (result.file ? ' ' + result.file : result.backup ? ' Backup: ' + result.backup : ''); message(result.message); }
   } catch (e) { message(e.message); }
   finally { listOperation = false; listButtons(); $('refresh-prices').disabled = refreshRunning; $('refresh-thumbnails').disabled = refreshRunning; $('empty-carts').disabled = refreshRunning; }
