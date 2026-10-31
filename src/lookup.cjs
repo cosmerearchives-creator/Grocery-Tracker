@@ -126,4 +126,38 @@ function extractProduct() {
   }
   return { url: pageUrl, candidates: [], reason: candidates.length ? 'The page’s default version could not be identified. Enter the displayed price manually.' : 'No readable USD product price found. Enter the displayed price manually.' };
 }
-module.exports = { extractProduct, extractScript: `(${extractProduct.toString()})()` };
+// Read only product-specific images, independently of the price.
+function extractThumbnail(result) {
+  if (result.accessBlocked) return result;
+  const title = [...document.querySelectorAll('h1')].find(n => n.getClientRects().length)?.textContent?.trim() || document.title;
+  const normalize = value => String(value || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const safe = value => { try { if (!value) return ''; const u = new URL(value, location.href); return u.protocol === 'https:' && !u.username && !u.password && u.href.length <= 4000 ? u.href : ''; } catch { return ''; } };
+  const imageUrl = value => { if (Array.isArray(value)) return value.map(imageUrl).find(Boolean) || ''; if (value && typeof value === 'object') return imageUrl(value.url || value.contentUrl); return typeof value === 'string' ? safe(value) : ''; };
+  const products = [];
+  const visit = (value, depth = 0) => {
+    if (!value || typeof value !== 'object' || depth > 14 || products.length >= 80) return;
+    if (Array.isArray(value)) { value.slice(0, 100).forEach(v => visit(v, depth + 1)); return; }
+    if ([].concat(value['@type'] || []).includes('Product')) products.push(value);
+    for (const [key, child] of Object.entries(value)) if (key !== 'offers') visit(child, depth + 1);
+  };
+  for (const script of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 30)) {
+    if (script.textContent.length <= 2000000) { try { visit(JSON.parse(script.textContent)); } catch {} }
+  }
+  const matched = products.filter(p => normalize(p.name) === normalize(title));
+  const images = [...new Set(matched.map(p => imageUrl(p.image)).filter(Boolean))];
+  let thumbnail = images.length === 1 ? images[0] : '';
+  if (!thumbnail && /(^|\.)meijer\.com$/.test(new URL(location.href).hostname) && new URL(location.href).pathname.startsWith('/shopping/product/')) {
+    // Meijer omits image metadata on some pages. Its labeled first gallery
+    // image belongs to the main product; recommendation cards use other markup.
+    const gallery = [...document.querySelectorAll('button[aria-label^="Product image. View larger image 1 of"] img')].filter(n => n.getClientRects().length);
+    const sources = [...new Set(gallery.map(n => safe(n.currentSrc || n.getAttribute('src'))).filter(Boolean))];
+    if (sources.length === 1) thumbnail = sources[0];
+  }
+  const productPage = result.candidates.length === 1 || /\/(?:product|products|p)\//.test(new URL(location.href).pathname) || matched.length === 1;
+  if (!thumbnail && productPage) {
+    const values = [...new Set([...document.querySelectorAll('meta[property="og:image"], meta[name="twitter:image"]')].map(n => safe(n.getAttribute('content'))).filter(Boolean))];
+    if (values.length === 1) thumbnail = values[0];
+  }
+  return { ...result, thumbnail, imageProduct: title };
+}
+module.exports = { extractProduct, extractThumbnail, extractScript: `(${extractThumbnail.toString()})((${extractProduct.toString()})())` };

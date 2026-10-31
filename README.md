@@ -6,7 +6,14 @@ A Windows grocery planner for Meijer, ALDI, and Gordon Food Service in Marion, O
 
 Download the `.exe` from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest). This preview is unsigned, so Windows may display an unknown-publisher message.
 
-## Version 0.6.0
+## Version 0.7.0
+
+- **Add to all stores.** The add-item row no longer asks for a cart. New items appear in all three stores with independent quantities, prices and availability. All carts groups each new item once. Existing items are unchanged.
+- **Empty all carts.** One button clears every active cart's items, products, alternatives, prices and images after an explicit confirmation. Cancel leaves carts intact. Store sign-ins are retained.
+- **Product thumbnails.** Price capture also saves the product image when available. Each main and alternative card shows its own thumbnail beside its details. Existing products can acquire images through refresh.
+- **Refresh thumbnails.** Checks saved product links across all carts, including quantity-zero alternatives, after a warning that it may take some time. It has progress and cancellation, retains old images on failures, and does not change prices, selections or quantities. Image reads use product metadata, page-level product images and Meijer’s labeled main gallery, excluding arbitrary recommendation images. Failed/mismatched pages are reported.
+
+### Cart views and prices
 
 - **Store-only cart views.** Clicking a store tab or View cart shows only that store's rows and product options. Show comparisons toggles the side-by-side panels for those same rows. Clicking another specific store returns to store-only mode.
 - **All carts.** The button beside the store tabs shows every active store's items with comparisons automatically enabled. Linked rows are grouped once; unrelated items with the same name remain separate. Store membership is labeled. Removing a row from this view names the store being affected. Totals, quantities and exports remain owned by their respective stores.
@@ -27,7 +34,7 @@ Download the `.exe` from [the latest release](https://github.com/cosmerearchives
 - **Saved product options.** Each saved product retains its own price, quantity and review state. Use this price makes a main option; Save as alternative collects an unselected option. Products with positive quantities all count in totals and exports. Removing one price preserves other saved options.
 - **Walmart removed.** Walmart is excluded from visible store lists, searches and exports. Previously saved Walmart rows remain stored locally, readable by the upgraded app but inactive.
 
-- **Independent store carts.** Select a store before adding an item. Products, quantities, sizes and removals apply only to that store. The dashboard shows each cart's own subtotal and price coverage. Different carts are not ranked as identical baskets.
+- **Independent store carts.** New items are added to all three stores. Subsequent products, quantities, sizes and removals apply only to their respective store. The dashboard shows each cart's own subtotal and price coverage. Different carts are not ranked as identical baskets.
 - **Use this price saves automatically.** Open a product in a store tab and click the button. Its detected product, package, URL and price save directly to that store's cart, one package per cart quantity. The main cart updates without a confirmation dialog or being brought forward.
 - **Needs review.** Automatically saved products carry a badge. Positive quantities enter totals immediately; quantity-zero alternatives do not. Review/edit any product later or click Mark reviewed on that product. Marking reviewed does not turn an online estimate into a verified shelf price. Exports include review flags for selected products.
 - **Only the used tab closes.** Use this price closes that store's tab and preserves the other pages and their sessions; Save as alternative keeps the tab open. The store window stays open even after the final tab is completed. A new search reopens all three tabs. Failed lookup or saving leaves the tab open.
@@ -55,7 +62,7 @@ Refresh is a manual batch check, not a guarantee that every website can be read.
 
 ## Privacy
 
-Cart files, backups, and retailer sessions stay in the local app-data folder. They are not included in the repository or installers. No analytics, app account or cloud cart sync is included. The reader examines public product metadata and product-page markup; it does not read passwords, forms, cookies or page storage. Signing into a retailer shares information with that retailer as usual.
+Cart files, backups, and retailer sessions stay in the local app-data folder. They are not included in the repository or installers. Product thumbnails are loaded over HTTPS from retailer/image hosts without a referring page URL. No analytics, app account or cloud cart sync is included. The reader examines public product metadata and product-page markup; it does not read passwords, forms, cookies or page storage. Signing into a retailer shares information with that retailer as usual.
 
 ## Development and release
 
@@ -76,6 +83,8 @@ Change the version in package.json, commit, and push a matching version tag. The
 Unit tests cover migration, independent product quantities and totals, store isolation, exports, unavailable status, review state, variant selection, Meijer fallback safeguards, and the ALDI name/UPC route. Windows UI checks cover Save as alternative, expansion/collapse, simultaneous main/alternative and multi-store quantities, quantity-zero export exclusion, unavailable/clear behavior, tab-only closure, restart persistence, and upgrading an actual v0.4 cart with an untouched backup.
 
 The v0.6 checks also cover store-only versus comparison views, deduplicated All carts, refresh changes/failures/skips, cancellation, edits during refresh, preservation of existing store pages, blocked-store request suppression, and continued checks at other stores. A live Kraft page was successfully refreshed; a subsequent Meijer request was denied by the retailer and safely retained/flagged. The app reports that restriction rather than trying to bypass it.
+
+The v0.7 checks cover adding linked rows to all three stores, grouping, empty-cart cancellation/confirmation, thumbnail capture and metadata selection, a live Meijer main-gallery fallback, retaining images on failures, and image-only refresh without repricing main or alternative products.
 
 ## Far future
 

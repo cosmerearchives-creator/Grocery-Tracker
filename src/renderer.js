@@ -20,11 +20,13 @@ async function change(command) {
 }
 function selectStore(id) {
   selectedStore = id; localStorage.setItem('cart-store', id);
-  if (id !== 'all') { comparisons = false; localStorage.setItem('cart-comparisons', 'false'); $('new-store').value = id; $('export-store').value = id; }
+  if (id !== 'all') { comparisons = false; localStorage.setItem('cart-comparisons', 'false'); $('export-store').value = id; }
   render();
 }
 function showRefresh(state) {
   $('refresh-prices').disabled = state.running;
+  $('refresh-thumbnails').disabled = state.running;
+  $('empty-carts').disabled = state.running;
   $('cancel-refresh').hidden = !state.running;
   $('refresh-status').textContent = state.text;
 }
@@ -139,6 +141,17 @@ function productCard(item, quote, index, store) {
   const main = item.priceOptions.find(o => !o.isAlternative);
   if (quote.isAlternative && main && main.cents !== quote.cents) card.append(el('span', `${format(Math.abs(main.cents - quote.cents))} ${quote.cents < main.cents ? 'less' : 'more'} per listed package than the main option`, 'source'));
   if (quote.needsReview) card.append(el('span', 'Needs review', 'review-badge'), button('Mark reviewed', () => change({ type: 'review', id: item.id, index }), 'mark-reviewed'));
+  const metadata = el('div', undefined, 'product-metadata');
+  const notes = [...card.querySelectorAll('.source, .refresh-error')];
+  const text = el('div', undefined, 'product-notes');
+  for (const note of notes) text.append(note);
+  metadata.append(text);
+  if (quote.thumbnailError) text.append(el('span', `Thumbnail: ${quote.thumbnailError}`, 'refresh-error'));
+  if (quote.thumbnail) {
+    metadata.classList.add('has-thumbnail');
+    const image = el('img', undefined, 'product-thumbnail'); image.alt = quote.product; image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.onerror = () => { image.hidden = true; metadata.classList.remove('has-thumbnail'); }; image.src = quote.thumbnail; metadata.append(image);
+  }
+  card.insertBefore(metadata, card.querySelector('.review-badge'));
   return card;
 }
 function parseAlternatives(text) {
@@ -164,6 +177,7 @@ function openPrice(item, store = item.store, index) {
   grocery.setCaptureTarget(item.id).catch(e => message(e.message));
   const offer = index === undefined ? item.offers[store] : item.priceOptions[index];
   $('price-store').textContent = stores.find(s => s.id === store).name; $('price-item').textContent = item.name;
+  editing.thumbnail = offer?.thumbnail || '';
   $('offer-product').value = offer?.product || `${item.name} — ${item.size}`;
   $('offer-price').value = offer ? (offer.cents / 100).toFixed(2) : ''; $('offer-packs').value = offer?.packs || 1;
   $('offer-source').value = offer?.source || 'manual'; $('offer-url').value = offer?.url || '';
@@ -172,9 +186,12 @@ function openPrice(item, store = item.store, index) {
 }
 $('add-form').onsubmit = async event => {
   event.preventDefault(); const name = $('new-name').value.trim(); if (!name) return;
-  try { await change({ type: 'add', name, size: $('new-size').value, store: $('new-store').value, match: $('new-match').value, upc: $('new-upc').value.trim(), alternatives: parseAlternatives($('new-alternatives').value) }); $('new-name').value = ''; $('new-size').value = ''; $('new-upc').value = ''; $('new-alternatives').value = ''; $('new-name').focus(); } catch {}
+  try { await change({ type: 'add-all', name, size: $('new-size').value, match: $('new-match').value, upc: $('new-upc').value.trim(), alternatives: parseAlternatives($('new-alternatives').value) }); $('new-name').value = ''; $('new-size').value = ''; $('new-upc').value = ''; $('new-alternatives').value = ''; $('new-name').focus(); } catch {}
 };
-$('new-store').onchange = event => { if (selectedStore !== 'all') selectStore(event.target.value); };
+$('empty-carts').onclick = () => grocery.emptyCarts().catch(e => message(e.message));
+$('refresh-thumbnails').onclick = () => $('thumbnail-dialog').showModal();
+$('cancel-thumbnails').onclick = () => $('thumbnail-dialog').close();
+$('confirm-thumbnails').onclick = () => { $('thumbnail-dialog').close(); grocery.refreshThumbnails().catch(e => message(e.message)); };
 $('show-comparisons').onchange = event => { comparisons = event.target.checked; localStorage.setItem('cart-comparisons', String(comparisons)); render(); };
 $('refresh-prices').onclick = () => grocery.refreshPrices().catch(e => message(e.message));
 $('cancel-refresh').onclick = () => grocery.cancelPriceRefresh().catch(e => message(e.message));
@@ -184,7 +201,7 @@ $('delete-offer').onclick = async () => { try { await change({ type: 'remove-off
 $('price-form').onsubmit = async event => {
   event.preventDefault();
   try {
-    await change({ type: 'offer', id: editing.id, store: editing.store, index: editing.index, offer: { cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim(), source: $('offer-source').value, url: $('offer-url').value.trim(), checked: new Date().toISOString() } });
+    await change({ type: 'offer', id: editing.id, store: editing.store, index: editing.index, offer: { ...(editing.thumbnail ? { thumbnail: editing.thumbnail } : {}), cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim(), source: $('offer-source').value, url: $('offer-url').value.trim(), checked: new Date().toISOString() } });
     $('price-dialog').close();
   } catch {}
 };
@@ -193,7 +210,7 @@ $('lookup').onclick = async () => {
   try {
     const result = await grocery.capture(context.store, $('offer-url').value.trim()); if (editing !== context) return;
     if (result.candidates.length !== 1) { $('lookup-status').textContent = result.reason; return; }
-    const p = result.candidates[0]; $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2); $('offer-packs').value = 1; $('offer-url').value = result.url; $('offer-source').value = 'web-estimate'; $('offer-confirm').checked = false; $('lookup-status').textContent = `Detected ${format(p.cents)}. Check the package and save.`;
+    const p = result.candidates[0]; editing.thumbnail = result.thumbnail || ''; $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2); $('offer-packs').value = 1; $('offer-url').value = result.url; $('offer-source').value = 'web-estimate'; $('offer-confirm').checked = false; $('lookup-status').textContent = `Detected ${format(p.cents)}. Check the package and save.`;
   } catch (e) { $('lookup-status').textContent = e.message; } finally { $('lookup').disabled = false; }
 };
 $('copy').onclick = () => grocery.export($('export-store').value, 'copy').then(message).catch(e => message(e.message));
@@ -205,9 +222,8 @@ grocery.onCartChanged(value => { cart = value; render(); });
 window.addEventListener('beforeunload', event => { if (pending) { event.preventDefault(); event.returnValue = ''; } });
 Promise.all([grocery.load(), grocery.stores()]).then(([data, list]) => {
   cart = data.cart; stores = list; if (selectedStore !== 'all' && !stores.some(s => s.id === selectedStore)) selectedStore = 'meijer'; $('version').textContent = 'VERSION ' + data.version;
-  for (const store of stores) for (const id of ['new-store', 'export-store']) { const option = el('option', store.name); option.value = store.id; $(id).append(option); }
-  $('new-store').value = selectedStore === 'all' ? stores[0].id : selectedStore;
-  $('export-store').value = $('new-store').value; render();
+  for (const store of stores) for (const id of ['export-store']) { const option = el('option', store.name); option.value = store.id; $(id).append(option); }
+  $('export-store').value = selectedStore === 'all' ? stores[0].id : selectedStore; render();
   showRefresh(data.refreshState);
   if (data.loadError) message('Your previous cart could not be read. A backup was preserved locally.');
 }).catch(e => message('Could not load your cart: ' + e.message));

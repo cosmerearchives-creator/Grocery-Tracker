@@ -48,7 +48,11 @@ function migrateCart(value) {
   }
   old.schema = 3; return validateCart(old);
 }
+function validThumbnail(value) {
+  try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && value.length <= 4000; } catch { return false; }
+}
 function validateOffer(store, offer) {
+  if (offer?.thumbnail && !validThumbnail(offer.thumbnail)) throw Error('Invalid product image link.');
   if (!offer || !Number.isInteger(offer.cents) || offer.cents <= 0 || offer.cents > 10000000 || !Number.isInteger(offer.packs) || offer.packs < 1 || offer.packs > 999 || typeof offer.product !== 'string' || !offer.product.trim() || offer.product.length > 600 || typeof offer.checked !== 'string' || !['manual', 'web-estimate', 'shelf'].includes(offer.source) || (offer.needsReview !== undefined && typeof offer.needsReview !== 'boolean')) throw Error('Invalid price.');
   if (offer.url && !validStoreUrl(store, offer.url)) throw Error('Invalid store product link.');
 }
@@ -140,7 +144,12 @@ function checklist(cart, store) {
 }
 function applyChange(cart, change) {
   const item = cart.items.find(i => i.id === change.id);
-  if (change.type === 'add') {
+  if (change.type === 'empty-carts') {
+    cart.items = cart.items.filter(i => !STORES.some(s => s.id === i.store));
+  } else if (change.type === 'add-all') {
+    const originId = randomUUID();
+    for (const store of STORES) cart.items.push({ id: randomUUID(), originId, store: store.id, name: String(change.name || '').trim(), brand: '', size: String(change.size || '').trim(), upc: change.upc || '', alternatives: structuredClone(change.alternatives || []), match: change.match || 'equivalent', quantity: 0, offers: {}, priceOptions: [], available: true });
+  } else if (change.type === 'add') {
     const id = randomUUID(); if (!STORES.some(s => s.id === change.store)) throw Error('Choose an active store.');
     cart.items.push({ id, originId: id, store: change.store, name: String(change.name || '').trim(), brand: '', size: String(change.size || '').trim(), upc: change.upc || '', alternatives: change.alternatives || [], match: change.match || 'equivalent', quantity: 0, offers: {}, priceOptions: [], available: true });
   } else {
@@ -180,7 +189,7 @@ function applyDetected(cart, itemId, store, result, asAlternative = false) {
   const product = result.candidates[0]; if (/OutOfStock|Discontinued|SoldOut/i.test(product.availability)) throw Error('This product is unavailable.');
   const target = ensureStoreItem(cart, source, store);
   if (!asAlternative) target.available = true;
-  rememberOffer(target, { cents: product.cents, packs: 1, product: product.product, source: 'web-estimate', url: result.url, checked: new Date().toISOString(), needsReview: true }, asAlternative);
+  rememberOffer(target, { cents: product.cents, packs: 1, product: product.product, ...(validThumbnail(result.thumbnail) ? { thumbnail: result.thumbnail } : {}), source: 'web-estimate', url: result.url, checked: new Date().toISOString(), needsReview: true }, asAlternative);
   validateCart(cart); return target.id;
 }
 function applyPriceRefresh(cart, itemId, previous, result, error, checked = new Date().toISOString()) {
@@ -207,9 +216,25 @@ function applyPriceRefresh(cart, itemId, previous, result, error, checked = new 
     option.needsReview = true; syncPrimary(item); validateCart(cart); return 'failed';
   }
   const changed = option.cents !== detected.cents;
+  if (validThumbnail(result.thumbnail)) { option.thumbnail = result.thumbnail; option.thumbnailChecked = checked; delete option.thumbnailError; }
   option.cents = detected.cents; option.checked = checked; option.refreshDetectedProduct = String(detected.product || '').slice(0, 600);
   delete option.refreshError;
   if (changed || (detected.product && option.product.toLowerCase() !== detected.product.toLowerCase())) option.needsReview = true;
   syncPrimary(item); validateCart(cart); return changed ? 'changed' : 'unchanged';
 }
-module.exports = { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, summarize, money, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh };
+function applyThumbnailRefresh(cart, itemId, previous, result, error, checked = new Date().toISOString()) {
+  const item = cart.items.find(i => i.id === itemId);
+  const option = item?.priceOptions.find(o => optionKey(o) === optionKey(previous));
+  if (!option || option.thumbnail !== previous.thumbnail) return 'skipped';
+  const identity = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const pageName = result?.candidates?.[0]?.product || result?.imageProduct;
+  option.thumbnailAttempt = checked;
+  if (error || !validThumbnail(result?.thumbnail) || !pageName || identity(pageName) !== identity(option.product)) {
+    option.thumbnailError = String(error || (pageName && identity(pageName) !== identity(option.product) ? 'The page describes a different product or version. Existing image retained.' : 'No matching product thumbnail found. Existing image retained.')).slice(0, 300);
+    syncPrimary(item); validateCart(cart); return 'failed';
+  }
+  const changed = option.thumbnail !== result.thumbnail;
+  option.thumbnail = result.thumbnail; option.thumbnailChecked = checked; delete option.thumbnailError;
+  syncPrimary(item); validateCart(cart); return changed ? 'changed' : 'unchanged';
+}
+module.exports = { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, summarize, money, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh, validThumbnail };

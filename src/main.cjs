@@ -2,7 +2,7 @@ const { app, BrowserWindow, WebContentsView, ipcMain, dialog, clipboard, Menu } 
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
-const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh } = require('./model.cjs');
+const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh } = require('./model.cjs');
 const { extractScript } = require('./lookup.cjs');
 const { cartView } = require('./cart-view.cjs');
 let main, cart, readyUpdate = false, updateBusy = false;
@@ -190,11 +190,11 @@ function refreshWindow(store) {
   window.webContents.session.setPermissionCheckHandler(() => false);
   refreshWindows.set(store, window); return window;
 }
-async function readRefreshProduct(store, url) {
+async function readRefreshProduct(store, url, mode = 'prices') {
   const wc = refreshWindow(store).webContents;
   let timer;
   try {
-    await Promise.race([wc.loadURL(url), new Promise((_, reject) => { timer = setTimeout(() => { if (!wc.isDestroyed()) wc.stop(); reject(Error('Product page took too long to load.')); }, 45000); })]);
+    await Promise.race([wc.loadURL(url, { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache' }), new Promise((_, reject) => { timer = setTimeout(() => { if (!wc.isDestroyed()) wc.stop(); reject(Error('Product page took too long to load.')); }, 45000); })]);
   } finally { clearTimeout(timer); }
   const deadline = Date.now() + 12000;
   let result;
@@ -203,7 +203,7 @@ async function readRefreshProduct(store, url) {
     if (wc.isDestroyed() || !validStoreUrl(store, wc.getURL())) throw Error('Product page is unavailable.');
     result = await wc.executeJavaScript(extractScript, false);
     if (!result || !validStoreUrl(store, result.url)) throw Error('Product page is unavailable.');
-    if (result.candidates.length || result.accessBlocked || /marked unavailable/.test(result.reason)) return result;
+    if ((mode === 'thumbnails' ? result.thumbnail : result.candidates.length) || result.accessBlocked || /marked unavailable/.test(result.reason)) return result;
     await new Promise(resolve => setTimeout(resolve, 500));
   } while (Date.now() < deadline);
   return result;
@@ -212,11 +212,12 @@ function cancelPriceRefresh() {
   refreshCanceled = true;
   for (const window of refreshWindows.values()) if (!window.isDestroyed()) window.webContents.stop();
 }
-async function runPriceRefresh() {
+async function runPriceRefresh(mode = 'prices') {
   const jobs = cart.items.filter(i => STORES.some(s => s.id === i.store)).flatMap(item => item.priceOptions.length ? item.priceOptions.map(option => ({ itemId: item.id, store: item.store, option: { ...option } })) : [{ itemId: item.id, store: item.store, option: null }]);
   const cache = new Map(), blockedStores = new Set(); refreshCanceled = false;
-  refreshState = { running: true, done: 0, total: jobs.length, changed: 0, failed: 0, skipped: 0, unchanged: 0, text: 'Starting price refresh…' }; sendRefresh();
+  refreshState = { running: true, mode, done: 0, total: jobs.length, changed: 0, failed: 0, skipped: 0, unchanged: 0, text: `Starting ${mode === 'thumbnails' ? 'thumbnail' : 'price'} refresh…` }; sendRefresh();
   try {
+    if (mode === 'thumbnails' && main && !main.isDestroyed()) await main.webContents.session.clearCache();
     for (const job of jobs) {
       if (refreshCanceled) break;
       if (!job.option?.url) { refreshState.skipped++; refreshState.done++; sendRefresh(); continue; }
@@ -225,7 +226,7 @@ async function runPriceRefresh() {
       if (blockedStores.has(job.store)) cache.set(key, { error: 'This store blocked access during refresh. Open its tab to sign in or try again later.' });
       if (!cache.has(key)) {
         try {
-          const result = await readRefreshProduct(job.store, job.option.url);
+          const result = await readRefreshProduct(job.store, job.option.url, mode);
           if (result.accessBlocked) { blockedStores.add(job.store); cache.set(key, { error: result.reason }); }
           else cache.set(key, { result });
         }
@@ -233,14 +234,14 @@ async function runPriceRefresh() {
       }
       if (refreshCanceled) break;
       const response = cache.get(key); let outcome;
-      await persist(snapshot => { outcome = applyPriceRefresh(snapshot, job.itemId, job.option, response.result, response.error); });
+      await persist(snapshot => { outcome = (mode === 'thumbnails' ? applyThumbnailRefresh : applyPriceRefresh)(snapshot, job.itemId, job.option, response.result, response.error); });
       refreshState[outcome]++; refreshState.done++; sendRefresh();
     }
-  } catch { refreshState.failed++; refreshState.text = 'Price refresh stopped because changes could not be saved. Existing saved prices are retained.'; }
+  } catch { refreshState.failed++; refreshState.text = 'Refresh stopped because changes could not be saved. Existing saved data is retained.'; }
   finally {
     for (const window of refreshWindows.values()) if (!window.isDestroyed()) window.destroy();
     refreshWindows.clear(); refreshState.running = false;
-    if (!refreshState.text.startsWith('Price refresh stopped')) refreshState.text = `${refreshCanceled ? 'Canceled' : 'Finished'}: ${refreshState.done}/${refreshState.total} processed · ${refreshState.changed} prices changed · ${refreshState.unchanged} unchanged · ${refreshState.failed} could not be checked · ${refreshState.skipped} skipped (no link, edited or removed).`;
+    if (!refreshState.text.startsWith('Refresh stopped')) refreshState.text = `${refreshCanceled ? 'Canceled' : 'Finished'}: ${refreshState.done}/${refreshState.total} processed · ${refreshState.changed} ${mode === 'thumbnails' ? 'thumbnails' : 'prices'} updated · ${refreshState.unchanged} unchanged · ${refreshState.failed} could not be checked · ${refreshState.skipped} skipped (no link, edited or removed).`;
     sendRefresh();
   }
 }
@@ -267,6 +268,13 @@ app.whenReady().then(async () => {
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', event => event.preventDefault());
   handle('load', () => ({ cart, version: app.getVersion(), loadError, refreshState }));
+  handle('refresh-thumbnails', () => { if (refreshState.running) return false; runPriceRefresh('thumbnails').catch(() => {}); return true; });
+  handle('empty-carts', async () => {
+    if (refreshState.running) throw Error('Wait for the refresh to finish or cancel it before emptying carts.');
+    const result = await dialog.showMessageBox(main, { type: 'warning', buttons: ['Keep carts', 'Empty all carts'], defaultId: 0, cancelId: 0, title: 'Empty all carts?', message: 'Remove every item from all three store carts?', detail: 'Saved products, alternatives, quantities, prices and thumbnails will be removed. This cannot be undone.' });
+    if (result.response !== 1) return false;
+    await persist(snapshot => applyChange(snapshot, { type: 'empty-carts' })); return true;
+  });
   handle('refresh-prices', () => { if (refreshState.running) return false; runPriceRefresh().catch(() => {}); return true; });
   handle('cancel-price-refresh', () => { cancelPriceRefresh(); return true; });
   handle('stores', () => STORES.map(({ id, name }) => ({ id, name })));

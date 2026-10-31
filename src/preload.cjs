@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('grocery', {
   onCartChanged: callback => ipcRenderer.on('cart-changed', (_event, cart) => callback(cart)),
   stores: () => ipcRenderer.invoke('stores'),
   cartView: (selectedStore, comparisons) => ipcRenderer.invoke('cart-view', selectedStore, comparisons),
+  emptyCarts: () => ipcRenderer.invoke('empty-carts'),
+  refreshThumbnails: () => ipcRenderer.invoke('refresh-thumbnails'),
   refreshPrices: () => ipcRenderer.invoke('refresh-prices'),
   cancelPriceRefresh: () => ipcRenderer.invoke('cancel-price-refresh'),
   onPriceRefresh: callback => ipcRenderer.on('price-refresh-status', (_event, state) => callback(state)),
