@@ -1,3 +1,4 @@
+const { selectedUnits, neededQuantity } = require('./model.cjs');
 // UI projection only: saved quantities, totals and store ownership are untouched.
 function cartView(cart, activeStoreIds, selectedStore, comparisons) {
   const active = cart.items.filter(item => activeStoreIds.includes(item.store));
@@ -6,6 +7,6 @@ function cartView(cart, activeStoreIds, selectedStore, comparisons) {
   for (const item of active) if (!unique.has(item.originId)) unique.set(item.originId, item);
   // The reusable shopping list is shared; cart selection changes the product columns.
   const rows = [...unique.values()].map(item => active.find(i => i.originId === item.originId && i.store === selectedStore) || item);
-  return { rows, compare: all || !!comparisons, storeIds: all || comparisons ? activeStoreIds : [selectedStore] };
+  return { rows: rows.map(item => ({ ...item, selectedUnits: selectedUnits(cart, item.originId), neededQuantity: neededQuantity(item.requiredAmount) })), compare: all || !!comparisons, storeIds: all || comparisons ? activeStoreIds : [selectedStore] };
 }
 module.exports = { cartView };

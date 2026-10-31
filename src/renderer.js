@@ -1,4 +1,6 @@
 /* global grocery */
+const browserReview = new URLSearchParams(location.search).has('review');
+if (browserReview) document.body.classList.add('browser-review');
 const $ = id => document.getElementById(id);
 let cart, stores = [], editing, pending = 0;
 let notificationTimer;
@@ -87,7 +89,9 @@ async function render() {
     const search = button('Search all 3 stores ↗', () => grocery.searchStores('', item.id, item.upc ? 'upc-0' : 'name-0'), 'search-stores');
     const remove = button('Delete', () => change({ type: 'delete-entry', id: item.id }), 'delete-entry'); remove.setAttribute('aria-label', `Delete list entry: ${item.name}`);
     top.append(label, search, remove); row.append(top);
-    const needed = el('label', 'Needed', 'needed-label'), amount = el('input'); amount.value = item.requiredAmount || ''; amount.maxLength = 200; amount.placeholder = 'e.g. 1 pound or 3 boxes'; amount.setAttribute('aria-label', `${item.name}: needed`); amount.onchange = () => change({ type: 'list-entry', id: item.id, requiredAmount: amount.value }).catch(() => {}); needed.append(amount); row.append(needed);
+    const needed = el('label', 'Needed', 'needed-label'), amount = el('input'); amount.value = item.requiredAmount || ''; amount.maxLength = 200; amount.placeholder = 'e.g. 1 pound or 3 boxes'; amount.setAttribute('aria-label', `${item.name}: needed`); amount.onchange = () => change({ type: 'list-entry', id: item.id, requiredAmount: amount.value }).catch(() => {}); const counter = el('span', '', 'cart-counter'); counter.setAttribute('aria-live', 'polite');
+    const updateCounter = () => { const match = amount.value.trim().match(/^(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?(?=\s|[^\d.]|$)/); const value = match ? Number(match[1]) / (match[2] ? Number(match[2]) : 1) : NaN; const selected = Number(item.selectedUnits.toFixed(6)); counter.textContent = `Cart: ${selected}/${Number.isFinite(value) && value > 0 ? Number(value.toFixed(6)) : '—'}`; counter.classList.toggle('over-needed', Number.isFinite(value) && selected > value); };
+    amount.oninput = updateCounter; updateCounter(); needed.append(amount, counter); row.append(needed);
     if (item.upc || item.retailerUpc) { const code = el('p', 'UPC: ' + (item.upc || item.retailerUpc), 'barcode-details'); code.title = item.barcodeNote || ''; row.append(code); }
     const options = el('div', undefined, 'offer-grid' + (view.compare ? '' : ' single-store'));
     for (const store of stores.filter(s => view.storeIds.includes(s.id))) {
@@ -119,9 +123,10 @@ async function render() {
         }
       }
       const selectedTotal = unavailable ? 0 : (related?.priceOptions || []).reduce((n, o) => n + o.cents * o.packs * o.quantity, 0);
-      block.append(el('p', `Selected here: ${format(selectedTotal)}`, 'selection-total'), button('Search this store ↗', () => grocery.searchStore(store.id, item.id, item.upc ? 'upc-0' : 'name-0'), 'search-this-store'), button(unavailable ? 'Clear not available' : 'Not available at this store', () => change({ type: 'availability', id: item.id, store: store.id, available: unavailable }), 'availability-toggle'));
-      if (related) block.append(button('Remove from this cart', () => change({ type: 'remove', id: related.id }), 'remove'));
-      options.append(block);
+      const actions = el('details', undefined, 'store-actions'); actions.append(el('summary', 'Store actions'));
+      actions.append(el('p', `Selected here: ${format(selectedTotal)}`, 'selection-total'), button('Search this store ↗', () => grocery.searchStore(store.id, item.id, item.upc ? 'upc-0' : 'name-0'), 'search-this-store'), button(unavailable ? 'Clear not available' : 'Not available at this store', () => change({ type: 'availability', id: item.id, store: store.id, available: unavailable }), 'availability-toggle'));
+      if (related) actions.append(button('Remove from this cart', () => change({ type: 'remove', id: related.id }), 'remove'));
+      block.append(actions); options.append(block);
     }
     row.append(options); $('items').append(row);
   }
@@ -144,7 +149,7 @@ function quantityControls(source, item, index, store) {
 function productCard(item, quote, index, store) {
   const card = el('div', undefined, 'product-option' + (item.available ? '' : ' unavailable')); card.dataset.option = index;
   const heading = el('div', undefined, 'product-option-heading'); heading.append(el('span', quote.purchaseKind ? `${quote.isAlternative && quote.purchaseKind !== 'case' ? 'Alternative · ' : ''}${quote.purchaseKind === 'case' ? 'Bulk' : 'Single item'} · ${quote.purchaseUnit}` : quote.isAlternative ? 'Alternative' : 'Main option', 'offer-store'), quantityControls(item, item, index, store));
-  card.append(heading, button(quote.product, () => openPrice(item, store.id, index), 'product-name'), el('strong', format(quote.cents) + ' / ' + (quote.purchaseUnit || 'package'), 'option-price'), el('span', `${quote.packs} package(s) per quantity · ${!item.available ? 'Excluded while marked not available' : quote.quantity > 0 ? format(quote.cents * quote.packs * quote.quantity) + ' selected' : 'Saved only · quantity 0'}`, 'source'));
+  card.append(heading, button(quote.product, () => openPrice(item, store.id, index), 'product-name'), button(format(quote.cents) + ' / ' + (quote.purchaseUnit || 'package'), () => openPrice(item, store.id, index), 'option-price'), el('span', `${quote.packs} package(s) per quantity · ${!item.available ? 'Excluded while marked not available' : quote.quantity > 0 ? format(quote.cents * quote.packs * quote.quantity) + ' selected' : 'Saved only · quantity 0'}`, 'source'));
   card.append(el('span', `${quote.source === 'shelf' ? 'Shelf / receipt verified' : quote.source === 'web-estimate' ? 'Online estimate' : 'Manual estimate'} · ${new Date(quote.checked).toLocaleDateString()}`, 'source'));
   if (quote.lastRefreshAttempt) card.append(el('span', `${quote.refreshError ? 'Last attempt' : 'Price checked'}: ${new Date(quote.lastRefreshAttempt).toLocaleString()}`, 'source'));
   if (quote.refreshError) card.append(el('span', `Couldn’t refresh: ${quote.refreshError}`, 'refresh-error'));
@@ -161,9 +166,15 @@ function productCard(item, quote, index, store) {
   if (quote.thumbnailError) text.append(el('span', `Thumbnail: ${quote.thumbnailError}`, 'refresh-error'));
   if (quote.thumbnail) {
     metadata.classList.add('has-thumbnail');
-    const image = el('img', undefined, 'product-thumbnail'); image.alt = quote.product; image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.onerror = () => { image.hidden = true; metadata.classList.remove('has-thumbnail'); }; image.src = quote.thumbnail; metadata.append(image);
+    const image = el('img', undefined, 'product-thumbnail'); image.alt = quote.product; image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.onerror = () => { image.remove(); metadata.classList.remove('has-thumbnail'); }; image.src = quote.thumbnail; metadata.append(image);
   }
-  card.insertBefore(metadata, card.querySelector('.review-badge'));
+  const details = el('details', undefined, 'product-details'); details.append(el('summary', 'Details / actions'), metadata);
+  for (const node of [...card.querySelectorAll('.review-badge, .mark-reviewed')]) details.append(node);
+  if (quote.needsReview) card.append(el('span', 'Needs review', 'compact-review'));
+  if (quote.thumbnail) { const image = metadata.querySelector('img'); if (image) card.insertBefore(image, card.children[1]); }
+  card.querySelector('.product-name').title = quote.product;
+  details.append(el('p', quote.product), button('Edit full product details', () => openPrice(item, store.id, index)));
+  card.append(details);
   return card;
 }
 function openPrice(item, store = item.store, index) {
@@ -171,7 +182,7 @@ function openPrice(item, store = item.store, index) {
   grocery.setCaptureTarget(item.id).catch(e => message(e.message));
   const offer = index === undefined ? item.offers[store] : item.priceOptions[index];
   $('price-store').textContent = stores.find(s => s.id === store).name; $('price-item').textContent = item.name;
-  editing.thumbnail = offer?.thumbnail || '';
+  editing.thumbnail = offer?.thumbnail || ''; $('offer-thumbnail').value = editing.thumbnail; $('offer-units').value = offer?.unitsTowardNeeded ?? 1;
   $('offer-product').value = offer?.product || `${item.name} — ${item.size}`;
   $('offer-price').value = offer ? (offer.cents / 100).toFixed(2) : ''; $('offer-packs').value = offer?.packs || 1;
   $('offer-source').value = offer?.source || 'manual'; $('offer-url').value = offer?.url || item.pendingUrl || '';
@@ -210,7 +221,8 @@ function openImport(preview) {
 }
 $('add-link').onclick = () => openImport();
 $('import-url').oninput = () => { importPreview = null; $('import-review').hidden = true; $('import-name').required = false; $('confirm-link').textContent = 'Read product details'; };
-$('cancel-link').onclick = () => { if (importRunning) grocery.cancelImport().catch(() => {}); $('import-dialog').close(); };
+$('import-dialog').addEventListener('cancel', () => { if (browserReview) grocery.finishReview(); });
+$('cancel-link').onclick = () => { if (browserReview) grocery.finishReview(); if (importRunning) grocery.cancelImport().catch(() => {}); $('import-dialog').close(); };
 $('import-form').onsubmit = async event => {
   event.preventDefault(); const url = $('import-url').value.trim();
   if (!importPreview) {
@@ -220,8 +232,8 @@ $('import-form').onsubmit = async event => {
     finally { $('confirm-link').disabled = false; }
     return;
   }
-  const options = { token: importPreview.token, name: $('import-name').value.trim(), requiredAmount: $('import-needed').value.trim() }, category = $('import-category').value.trim(); $('import-dialog').close(); importPreview = null;
-  try { const result = await grocery.importProduct(url, category, options); message(result.message); } catch (e) { message(e.message); }
+  const options = { token: importPreview.token, name: $('import-name').value.trim(), requiredAmount: $('import-needed').value.trim() }, category = $('import-category').value.trim(); if (!browserReview) $('import-dialog').close(); $('confirm-link').disabled = true; $('import-read-status').textContent = 'Adding to your list…'; importPreview = null;
+  try { const result = await grocery.importProduct(url, category, options); message(result.message); if (browserReview) await grocery.finishReview(); } catch (e) { message(e.message); if (browserReview) openImport({ ...options, url, productName: options.name }); } finally { $('confirm-link').disabled = false; }
 };
 grocery.onReviewProduct(openImport);
 $('cancel-entry').onclick = () => $('entry-dialog').close();
@@ -253,10 +265,10 @@ $('price-form').onsubmit = async event => {
   event.preventDefault();
   try {
     if (editing.lookupGroup) {
-      const result = structuredClone(editing.lookupGroup);
-      Object.assign(result.candidates[0], { cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim() });
+      const result = structuredClone(editing.lookupGroup); result.thumbnail = $('offer-thumbnail').value.trim();
+      Object.assign(result.candidates[0], { cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), unitsTowardNeeded: Number($('offer-units').value), product: $('offer-product').value.trim() });
       await change({ type: 'detected-offers', id: editing.id, store: editing.store, result });
-    } else await change({ type: 'offer', id: editing.id, store: editing.store, index: editing.index, offer: { ...(editing.thumbnail ? { thumbnail: editing.thumbnail } : {}), cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), product: $('offer-product').value.trim(), source: $('offer-source').value, url: $('offer-url').value.trim(), checked: new Date().toISOString() } });
+    } else await change({ type: 'offer', id: editing.id, store: editing.store, index: editing.index, offer: { thumbnail: $('offer-thumbnail').value.trim(), cents: Math.round(Number($('offer-price').value) * 100), packs: Number($('offer-packs').value), unitsTowardNeeded: Number($('offer-units').value), product: $('offer-product').value.trim(), source: $('offer-source').value, url: $('offer-url').value.trim(), checked: new Date().toISOString() } });
     $('price-dialog').close();
   } catch {}
 };
@@ -266,7 +278,7 @@ $('lookup').onclick = async () => {
     const result = await grocery.capture(context.store, $('offer-url').value.trim()); if (editing !== context) return;
     if (result.candidates.length !== 1 && !(context.store === 'gfs' && result.purchaseOptions && result.candidates.length === 2)) { $('lookup-status').textContent = result.reason; return; }
     editing.lookupGroup = context.store === 'gfs' && result.purchaseOptions ? result : null;
-    const p = result.candidates[0]; editing.thumbnail = result.thumbnail || ''; $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2); $('offer-packs').value = 1; $('offer-url').value = result.url; $('offer-source').value = 'web-estimate'; $('offer-confirm').checked = false; $('lookup-status').textContent = editing.lookupGroup?.candidates.length === 2 ? `Detected ${result.candidates.map(p => format(p.cents) + ' / ' + p.purchaseUnit).join(' and ')}. Saving keeps both for review; the case starts at quantity 0.` : `Detected ${format(p.cents)}. Check the package and save.`;
+    const p = result.candidates[0]; editing.thumbnail = result.thumbnail || ''; $('offer-thumbnail').value = editing.thumbnail; $('offer-product').value = p.product; $('offer-price').value = (p.cents / 100).toFixed(2); $('offer-packs').value = 1; $('offer-url').value = result.url; $('offer-source').value = 'web-estimate'; $('offer-confirm').checked = false; $('lookup-status').textContent = editing.lookupGroup?.candidates.length === 2 ? `Detected ${result.candidates.map(p => format(p.cents) + ' / ' + p.purchaseUnit).join(' and ')}. Saving keeps both for review; the case starts at quantity 0.` : `Detected ${format(p.cents)}. Check the package and save.`;
   } catch (e) { $('lookup-status').textContent = e.message; } finally { $('lookup').disabled = false; }
 };
 $('copy').onclick = () => grocery.export($('export-store').value, 'copy').then(message).catch(e => message(e.message));

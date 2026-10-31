@@ -36,7 +36,7 @@ test('failed, mismatched or concurrently edited images retain the saved thumbnai
   assert.equal(applyThumbnailRefresh(cart, item.id, { ...before, thumbnail: 'https://old.example/img' }, result), 'skipped');
 });
 function extract(products, meta = [], title = 'Cheese', pathname = '/shopping/product/cheese/123', gallery = []) {
-  return vm.runInNewContext(`(${extractThumbnail.toString()})({candidates:[]})`, { URL, location: { href: 'https://www.meijer.com' + pathname }, document: { title, querySelectorAll: selector => selector === 'h1' ? [{ textContent: title, getClientRects: () => [{}] }] : selector.startsWith('button[aria-label') ? gallery.map(src => ({ currentSrc: src, getClientRects: () => [{}] })) : selector.startsWith('script') ? [{ textContent: JSON.stringify(products) }] : meta.map(content => ({ getAttribute: () => content })) } });
+  return vm.runInNewContext(`(${extractThumbnail.toString()})({candidates:[]})`, { URL, location: { href: 'https://www.meijer.com' + pathname }, document: { title, querySelectorAll: selector => selector === 'h1' ? [{ textContent: title, getClientRects: () => [{}] }] : selector.startsWith('button[aria-label') ? gallery.map(src => ({ currentSrc: src, getClientRects: () => [{}] })) : selector.startsWith('main img') ? [] : selector.startsWith('script') ? [{ textContent: JSON.stringify(products) }] : meta.map(content => ({ getAttribute: () => content })) } });
 }
 test('image extraction selects product metadata rather than recommendation images', () => {
   const product = (name, image) => ({ '@type': 'Product', name, image });

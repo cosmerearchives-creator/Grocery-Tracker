@@ -17,6 +17,15 @@ function searchUrl(id, query) {
   const config = destinations[id]; if (!config) throw Error('Unknown store.');
   const url = new URL(config[0]); url.searchParams.set(config[1], query.trim()); return url.href;
 }
+function emptyCart() { return { schema: 3, items: [] }; }
+function neededQuantity(text) {
+  const match = String(text || '').trim().match(/^(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?(?=\s|[^\d.]|$)/);
+  const n = match ? Number(match[1]) / (match[2] ? Number(match[2]) : 1) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+function selectedUnits(cart, originId) {
+  return cart.items.filter(i => i.originId === originId && i.available && STORES.some(s => s.id === i.store)).reduce((n, i) => n + i.priceOptions.reduce((m, o) => m + o.quantity * (o.unitsTowardNeeded ?? 1), 0), 0);
+}
 function starterCart() {
   return { schema: 3, items: [
     ['Kraft American Singles', 'Kraft', 'Compare package sizes', 'exact'], ['Red Bull Original', 'Red Bull', '16 fl oz can', 'exact'],
@@ -53,6 +62,7 @@ function validThumbnail(value) {
   try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && value.length <= 4000; } catch { return false; }
 }
 function validateOffer(store, offer) {
+  if (offer?.unitsTowardNeeded !== undefined && (!Number.isFinite(offer.unitsTowardNeeded) || offer.unitsTowardNeeded <= 0 || offer.unitsTowardNeeded > 1000000)) throw Error('Units toward needed must be greater than 0 and at most 1000000.');
   if (offer?.purchaseKind !== undefined && (!['single', 'case'].includes(offer.purchaseKind) || typeof offer.purchaseUnit !== 'string' || !offer.purchaseUnit.trim() || offer.purchaseUnit.length > 60 || !/^\d{1,30}$/.test(offer.productCode))) throw Error('Invalid single-item or case option.');
   if (offer?.thumbnail && !validThumbnail(offer.thumbnail)) throw Error('Invalid product image link.');
   if (!offer || !Number.isInteger(offer.cents) || offer.cents <= 0 || offer.cents > 10000000 || !Number.isInteger(offer.packs) || offer.packs < 1 || offer.packs > 999 || typeof offer.product !== 'string' || !offer.product.trim() || offer.product.length > 600 || typeof offer.checked !== 'string' || !['manual', 'web-estimate', 'shelf'].includes(offer.source) || (offer.needsReview !== undefined && typeof offer.needsReview !== 'boolean')) throw Error('Invalid price.');
@@ -220,7 +230,7 @@ function applyDetected(cart, itemId, store, result, asAlternative = false) {
     if (!grouped && unavailable) throw Error('This product is unavailable.');
     const existing = target.priceOptions.find(o => o.product === product.product && o.url === result.url);
     const alternative = asAlternative || index > 0 || unavailable;
-    rememberOffer(target, { cents: product.cents, packs: product.packs || 1, product: product.product, ...(grouped ? { purchaseKind: product.purchaseKind, purchaseUnit: product.purchaseUnit, productCode: product.productCode, purchaseUnavailable: unavailable } : {}), ...(validThumbnail(result.thumbnail) ? { thumbnail: result.thumbnail } : {}), source: 'web-estimate', url: result.url, checked: new Date().toISOString(), needsReview: true }, alternative);
+    rememberOffer(target, { cents: product.cents, packs: product.packs || 1, unitsTowardNeeded: product.unitsTowardNeeded ?? existing?.unitsTowardNeeded ?? 1, product: product.product, ...(grouped ? { purchaseKind: product.purchaseKind, purchaseUnit: product.purchaseUnit, productCode: product.productCode, purchaseUnavailable: unavailable } : {}), ...(validThumbnail(result.thumbnail) ? { thumbnail: result.thumbnail } : {}), source: 'web-estimate', url: result.url, checked: new Date().toISOString(), needsReview: true }, alternative);
     if (unavailable && !existing) target.priceOptions.find(o => o.product === product.product && o.url === result.url).quantity = 0;
   }
   syncPrimary(target); validateCart(cart); return target.id;
@@ -286,4 +296,4 @@ function categoryOrder(items) {
     return (x === 'Uncategorized') - (y === 'Uncategorized') || x.localeCompare(y, 'en', { sensitivity: 'base' }) || a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
   });
 }
-module.exports = { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, summarize, money, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh, validThumbnail, categoryName, categoryOrder };
+module.exports = { emptyCart, neededQuantity, selectedUnits, STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, summarize, money, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh, validThumbnail, categoryName, categoryOrder };

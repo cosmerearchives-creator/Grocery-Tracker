@@ -155,7 +155,7 @@ function extractThumbnail(result) {
   if (result.accessBlocked) return result;
   const title = [...document.querySelectorAll('h1')].find(n => n.getClientRects().length)?.textContent?.trim() || document.title;
   const normalize = value => String(value || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-  const safe = value => { try { if (!value) return ''; const u = new URL(value, location.href); return u.protocol === 'https:' && !u.username && !u.password && u.href.length <= 4000 ? u.href : ''; } catch { return ''; } };
+  const safe = value => { try { if (!value || /(?:missing[-_]item|no[-_]image|image[-_]not[-_]available|placeholder)/i.test(value)) return ''; const u = new URL(value, location.href); return u.protocol === 'https:' && !u.username && !u.password && u.href.length <= 4000 ? u.href : ''; } catch { return ''; } };
   const imageUrl = value => { if (Array.isArray(value)) return value.map(imageUrl).find(Boolean) || ''; if (value && typeof value === 'object') return imageUrl(value.url || value.contentUrl); return typeof value === 'string' ? safe(value) : ''; };
   const products = [];
   const visit = (value, depth = 0) => {
@@ -167,7 +167,9 @@ function extractThumbnail(result) {
   for (const script of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 30)) {
     if (script.textContent.length <= 2000000) { try { visit(JSON.parse(script.textContent)); } catch {} }
   }
-  const matched = products.filter(p => normalize(p.name) === normalize(title));
+  const samePage = value => { try { const u = new URL(value, location.href), page = new URL(location.href); return u.origin === page.origin && u.pathname.replace(/\/$/, '') === page.pathname.replace(/\/$/, ''); } catch { return false; } };
+  const linked = products.filter(p => p.url && samePage(p.url));
+  const matched = linked.length ? linked : products.filter(p => normalize(p.name) === normalize(title));
   const images = [...new Set(matched.map(p => imageUrl(p.image)).filter(Boolean))];
   let thumbnail = images.length === 1 ? images[0] : '';
   if (!thumbnail && /(^|\.)meijer\.com$/.test(new URL(location.href).hostname) && new URL(location.href).pathname.startsWith('/shopping/product/')) {
@@ -181,6 +183,14 @@ function extractThumbnail(result) {
   if (!thumbnail && productPage) {
     const values = [...new Set([...document.querySelectorAll('meta[property="og:image"], meta[name="twitter:image"]')].map(n => safe(n.getAttribute('content'))).filter(Boolean))];
     if (values.length === 1) thumbnail = values[0];
+  }
+  // Dynamic ALDI carousel and GFS galleries can lack JSON-LD/OG images.
+  // Require an exact product alt label; never choose a generic first image.
+  if (!thumbnail && productPage) {
+    const selector = /(^|\.)aldi\.us$/.test(new URL(location.href).hostname) ? 'img[alt]' : 'main img[alt], [itemtype$="/Product"] img[alt]';
+    const gallery = [...document.querySelectorAll(selector)].filter(n => n.getClientRects().length && normalize(n.getAttribute('alt')) === normalize(title));
+    const sources = [...new Set(gallery.map(n => safe(n.currentSrc || n.getAttribute('src') || n.getAttribute('data-src'))).filter(Boolean))];
+    if (sources.length === 1) thumbnail = sources[0];
   }
   return { ...result, thumbnail, imageProduct: title };
 }

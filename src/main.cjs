@@ -2,13 +2,14 @@ const { app, BrowserWindow, WebContentsView, ipcMain, dialog, clipboard, Menu } 
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
-const { STORES, validStoreUrl, searchUrl, starterCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh } = require('./model.cjs');
+const { STORES, validStoreUrl, searchUrl, emptyCart, migrateCart, validateCart, checklist, applyChange, applyDetected, searchChoices, applyPriceRefresh, applyThumbnailRefresh } = require('./model.cjs');
 const { randomUUID } = require('node:crypto');
 const { sourceStore, createImported, applyImportedMatch, suggestEntry } = require('./import-product.cjs');
 const { normalizeGtin } = require('./barcode.cjs');
 const { extractScript, searchLinksScript } = require('./lookup.cjs');
 const { readList, writeList } = require('./list-files.cjs');
 const { cartView } = require('./cart-view.cjs');
+let reviewWindow;
 let main, cart, readyUpdate = false, updateBusy = false;
 let writeQueue = Promise.resolve();
 const storeViews = new Map();
@@ -28,7 +29,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (main && !main.isDestroyed()) { if (main.isMinimized()) main.restore(); main.focus(); } });
 const cartPath = () => path.join(app.getPath('userData'), 'cart.json');
 const sendStatus = (text, ready = false) => { if (main && !main.isDestroyed()) main.webContents.send('update-status', { text, ready }); };
-function trusted(event) { if (!main || event.sender !== main.webContents || event.senderFrame !== main.webContents.mainFrame) throw Error('Untrusted request.'); }
+function trusted(event) { if (![main, reviewWindow].some(w => w && !w.isDestroyed() && event.sender === w.webContents && event.senderFrame === w.webContents.mainFrame)) throw Error('Untrusted request.'); }
 function handle(name, callback) { ipcMain.handle(name, (event, ...args) => { trusted(event); return callback(...args); }); }
 async function persist(value) {
   writeQueue = writeQueue.catch(() => {}).then(async () => {
@@ -158,8 +159,18 @@ ipcMain.handle('store-tab-review-new', (event, token) => {
   const preview = productPreviews.get(token);
   if (!preview || preview.expires < Date.now() || listBusy) throw Error('Read the product details again.');
   const store = sourceStore(preview.url);
-  main.webContents.send('review-product', { token, url: preview.url, ...suggestEntry(preview.url, store, preview.result), upc: preview.result.details?.upc || '' });
-  if (main.isMinimized()) main.restore(); main.show(); main.focus(); return true;
+  if (reviewWindow && !reviewWindow.isDestroyed()) { reviewWindow.focus(); return true; }
+  reviewWindow = new BrowserWindow({ parent: storeShell, modal: true, show: false, width: 660, height: 770, title: 'Add to Shopping List', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
+  const window = reviewWindow;
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', e => e.preventDefault());
+  window.on('closed', () => { if (reviewWindow === window) reviewWindow = null; if (storeShell && !storeShell.isDestroyed()) storeShell.focus(); });
+  window.webContents.once('did-finish-load', () => {
+    window.webContents.send('review-product', { token, url: preview.url, ...suggestEntry(preview.url, store, preview.result), upc: preview.result.details?.upc || '' });
+    window.show();
+  });
+  window.loadFile(path.join(__dirname, 'index.html'), { query: { review: '1' } });
+  return true;
 });
 ipcMain.handle('store-tab-add-new', async (event, options = {}) => {
   trustedTabs(event);
@@ -168,7 +179,7 @@ ipcMain.handle('store-tab-add-new', async (event, options = {}) => {
 });
 function sendImport(text, running = importBusy) {
   importState = { running, text };
-  if (main && !main.isDestroyed()) main.webContents.send('import-status', importState);
+  for (const window of [main, reviewWindow]) if (window && !window.isDestroyed()) window.webContents.send('import-status', importState);
   updateTabs();
 }
 function cancelImport() {
@@ -197,7 +208,7 @@ async function importRead(wc, store, wait = 5000) {
     if (importCanceled || wc.isDestroyed()) throw Error('Import canceled.');
     if (!validStoreUrl(store, wc.getURL())) throw Error('Unsupported store page.');
     result = await wc.executeJavaScript(extractScript, false);
-    if (result.accessBlocked || result.candidates?.length) return result;
+    if (result.accessBlocked || (result.candidates?.length && result.thumbnail)) return result;
     await new Promise(resolve => setTimeout(resolve, 400));
   } while (Date.now() < deadline);
   return result;
@@ -327,7 +338,7 @@ async function capture(id, url) {
     if (wc.isDestroyed() || !validStoreUrl(id, wc.getURL())) throw Error('Store page is unavailable.');
     result = await wc.executeJavaScript(extractScript, false);
     if (!result || !validStoreUrl(id, result.url)) throw Error('Could not read this product page.');
-    if (result.candidates.length || result.accessBlocked || /marked unavailable/.test(result.reason)) break;
+    if ((result.candidates.length && result.thumbnail) || result.accessBlocked || /marked unavailable/.test(result.reason)) break;
     await new Promise(resolve => setTimeout(resolve, 500));
   } while (Date.now() < deadline);
   return result;
@@ -446,7 +457,7 @@ app.whenReady().then(async () => {
     if (JSON.stringify(raw) !== JSON.stringify(cart)) { await fs.copyFile(cartPath(), cartPath() + '.before-store-carts-' + Date.now()); await persist(cart); }
   }
   catch (error) {
-    cart = starterCart();
+    cart = emptyCart();
     if (error.code !== 'ENOENT') { loadError = true; await fs.copyFile(cartPath(), cartPath() + '.backup-' + Date.now()).catch(() => {}); }
   }
   main = new BrowserWindow({ width: 1360, height: 930, minWidth: 980, minHeight: 700, backgroundColor: '#f4f5ef', title: 'Grocery Tracker', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
@@ -455,6 +466,7 @@ app.whenReady().then(async () => {
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', event => event.preventDefault());
   handle('list-file', listAction);
+  handle('finish-review', () => { const window = reviewWindow; setTimeout(() => { if (window && !window.isDestroyed()) window.close(); }, 100); return true; });
   handle('preview-product', url => previewProduct(url));
   handle('import-product', (url, category, options) => runImport(url, category, undefined, options));
   handle('cancel-import', () => { cancelImport(); return true; });
