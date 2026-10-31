@@ -6,6 +6,10 @@ A local Windows shopping planner for Meijer, ALDI and Gordon Food Service in Mar
 
 Download the installer from [the latest release](https://github.com/cosmerearchives-creator/Grocery-Tracker/releases/latest), or use Check for updates in the installed app. Builds are unsigned. Installed builds check for updates on startup and every four hours, then offer a restart after downloading.
 
+## Version 0.13.1 — narrower header
+
+The title, list controls and cart export actions now stay together in a compact header capped at 720 CSS pixels, instead of stretching across the full workspace. Smaller title text, tighter spacing and narrower controls preserve all fields and actions. The shopping list continues to use the full available width.
+
 ## Version 0.13.0 — compact comparisons and cart fulfillment
 
 New installations start with an empty shopping list. Existing lists, saved options and quantities are preserved, including old starter entries that users may have edited.

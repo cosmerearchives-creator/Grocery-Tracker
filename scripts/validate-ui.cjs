@@ -42,6 +42,24 @@ app.whenReady().then(async()=>{
   await evaluate(main,"document.getElementById('close-price').click()");
   const compactHeight=await evaluate(main,"document.querySelector('.item').getBoundingClientRect().height");
   await sleep(700); await fs.writeFile(path.join(output,'compact.png'),(await main.webContents.capturePage()).toPNG());
+  const headerSizes = [];
+  for (const width of [1920, 1360, 980]) {
+    main.setSize(width, 930); await sleep(350);
+    const metrics = await evaluate(main, `(() => {
+      const header=document.querySelector('header'), bounds=header.getBoundingClientRect();
+      const sections=[...header.children].map(n=>n.getBoundingClientRect());
+      return {windowWidth:innerWidth, headerWidth:bounds.width, headerHeight:bounds.height,
+        overflow:document.documentElement.scrollWidth>innerWidth,
+        overlap:sections.some((r,i)=>i && r.left<sections[i-1].right),
+        clippedControls:[...header.querySelectorAll('button,select,input')].filter(n=>n.scrollWidth>n.clientWidth+1).map(n=>n.id)};
+    })()`);
+    assert.ok(metrics.headerWidth<=720); assert.equal(metrics.overflow,false);
+    assert.equal(metrics.overlap,false); assert.deepEqual(metrics.clippedControls,[]);
+    headerSizes.push(metrics);
+    if(width===1360) await fs.writeFile(path.join(output,'compact-header.png'),(await main.webContents.capturePage()).toPNG());
+  }
+  main.setSize(1360,930); await sleep(200);
+  await fs.writeFile(path.join(output,'header-report.json'),JSON.stringify(headerSizes,null,2));
   await invoke(main,'open-store','aldi');
   const shell=await until(()=>BrowserWindow.getAllWindows().find(w=>w.getTitle().includes('Stores')));
   await until(()=>!shell.webContents.isLoading());
